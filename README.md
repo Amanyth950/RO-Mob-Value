@@ -11,7 +11,6 @@ This project is not affiliated with any server, publisher, game operator, or emu
 The app is organized around searchable farming tables rather than raw database browsing:
 
 - **Best farms** shows the filtered/sorted mob table. Select a mob row to inspect its drop value breakdown underneath the table.
-- **Compare** lets players compare multiple mobs side by side.
 - **Maps** groups mobs by parsed spawn map. Select a map row to show the mobs that spawn on that map underneath the table.
 - **Prices** supports NPC-only, read-only example, and editable personal price tables.
 - **Raw data** keeps the old spreadsheet-style escape hatch.
