@@ -11,7 +11,7 @@ The app is organized around searchable farming tables rather than raw database b
 - **Best farms** shows the filtered/sorted mob table. Select a mob row to inspect its drop value breakdown underneath the table.
 - **Compare** lets players compare multiple mobs side by side.
 - **Maps** groups mobs by parsed spawn map. Select a map row to show the mobs that spawn on that map underneath the table.
-- **Prices** supports NPC-only, guild/default, personal session, and imported/shared price tables.
+- **Prices** supports NPC-only, read-only example, and editable personal price tables.
 - **Raw data** keeps the old spreadsheet-style escape hatch.
 
 ## Run Locally
@@ -54,14 +54,21 @@ The full Hercules emulator clone is not required for deployment and should not b
 
 ## Price Tables
 
-The app supports several price-table modes without requiring a database yet:
+The app supports three price-table modes without requiring a database:
 
 - **NPC only**: uses item NPC sell values.
-- **Guild/default table**: read from `guild_prices.json` when present, then `guild_prices.example.json`, then `manual_prices.example.json`.
-- **Personal session**: editable in the UI for the current browser session.
-- **Imported/shared table**: upload or paste exported JSON from another player.
+- **Example table**: read-only overrides from `manual_prices.example.json`.
+- **Personal table**: editable session-local overrides.
 
-For a curated guild table, copy `guild_prices.example.json` to `guild_prices.json`, edit prices, and commit it. For personal/local testing, use `manual_prices.json`; it is ignored by git so local market edits are not committed accidentally.
+The **Prices** tab edits the Personal table directly with a table editor. You can add rows manually, remove rows, update prices inline, or add an item from the generated item catalog. Press **Apply table edits** after changing the table.
+
+Import/export is now part of the Personal table workflow:
+
+- **Export personal JSON** downloads the current Personal table as `manual_prices.json`.
+- **Import** loads a JSON file or pasted JSON into the Personal table.
+- Imports can either replace the current Personal table or merge into it.
+
+For local testing, `manual_prices.json` is still ignored by git. If present locally, it is loaded as the initial Personal table. The deployed example prices come from `manual_prices.example.json`.
 
 Exported/imported price tables use this wrapper format:
 
@@ -78,7 +85,7 @@ Exported/imported price tables use this wrapper format:
 }
 ```
 
-The legacy flat format from `manual_prices.example.json` is still accepted.
+The legacy flat format from `manual_prices.example.json` and `manual_prices.json` is still accepted.
 
 ## Expected Value Calculation
 
@@ -103,7 +110,7 @@ Merchant Overcharge applies only to NPC sell values. Manual market prices overri
 
 Use `streamlit_app.py` as the app entrypoint. Streamlit installs packages from `requirements.txt` and loads the committed `monster_ev.csv`.
 
-The current price-table implementation is intentionally backend-free. Personal edits are session-local unless exported or saved to a local JSON file. A future multi-user version should add authentication and persistent storage for named public/private price tables.
+The current price-table implementation is intentionally backend-free. Personal edits are session-local unless exported. A future multi-user version should add authentication and persistent storage for named public/private price tables.
 
 ## Legacy Entrypoints
 
