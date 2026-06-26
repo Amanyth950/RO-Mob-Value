@@ -39,7 +39,7 @@ def pretty_enum(value: Any) -> str:
         return ""
     for prefix in ELEMENT_PREFIXES + ("RC_", "Size_"):
         if text.startswith(prefix):
-            text = text[len(prefix) :]
+            text = text[len(prefix):]
             break
     return text.replace("_", " ").strip()
 
@@ -107,6 +107,23 @@ def parse_drops_json(value: Any) -> List[Dict[str, Any]]:
     except json.JSONDecodeError:
         return []
     return [drop for drop in parsed if isinstance(drop, dict)] if isinstance(parsed, list) else []
+
+
+def parse_spawn_summary(value: Any) -> Dict[str, int]:
+    spawns: Dict[str, int] = {}
+    text = str(value or "").strip()
+    if not text:
+        return spawns
+    for piece in text.split(";"):
+        part = piece.strip()
+        if not part or ":" not in part:
+            continue
+        map_name, count_text = part.rsplit(":", 1)
+        map_name = map_name.strip()
+        count = as_int(count_text.strip(), 0)
+        if map_name and count > 0:
+            spawns[map_name] = spawns.get(map_name, 0) + count
+    return spawns
 
 
 def drop_item_key(drop: Dict[str, Any]) -> str:
@@ -224,6 +241,7 @@ def drop_details_dataframe(drops: Iterable[Dict[str, Any]], multiplier: float, u
             {
                 "Item": str(drop.get("name") or drop.get("aegis_name") or ""),
                 "Adjusted EV": ev,
+                "EV Share": 0.0,
                 "Adjusted Chance": adjusted / 100.0,
                 "Effective Sell": int(sell) if float(sell).is_integer() else sell,
                 "Price Source": price_source(drop, use_overcharge, use_manual, prices),
@@ -240,7 +258,8 @@ def drop_details_dataframe(drops: Iterable[Dict[str, Any]], multiplier: float, u
         return detail
     total = as_float(detail["Adjusted EV"].sum(), 0.0)
     detail["EV Share"] = detail["Adjusted EV"] / total * 100.0 if total > 0 else 0.0
-    return detail.sort_values("Adjusted EV", ascending=False, kind="stable").reset_index(drop=True)
+    preferred = ["Item", "Adjusted EV", "EV Share", "Adjusted Chance", "Effective Sell", "Price Source", "Base Chance", "Base Sell", "Manual Price", "Type", "AegisName", "Missing Item"]
+    return detail[preferred].sort_values("Adjusted EV", ascending=False, kind="stable").reset_index(drop=True)
 
 
 def summarize_drops(detail: pd.DataFrame, limit: int = 3) -> str:
@@ -381,40 +400,43 @@ def monster_options(df: pd.DataFrame) -> Dict[str, int]:
     return opts
 
 
+def select_row_from_table(table_df: pd.DataFrame, source_df: pd.DataFrame, fallback_label: str) -> pd.Series | None:
+    selected_position = None
+    try:
+        event = st.dataframe(
+            table_df,
+            use_container_width=True,
+            hide_index=True,
+            on_select="rerun",
+            selection_mode="single-row",
+        )
+        rows = getattr(getattr(event, "selection", None), "rows", [])
+        if rows:
+            selected_position = int(rows[0])
+    except TypeError:
+        st.dataframe(table_df, use_container_width=True, hide_index=True)
+        if not source_df.empty:
+            opts = {str(label): idx for idx, label in enumerate(table_df.iloc[:, 0].astype(str).tolist())}
+            chosen = st.selectbox(fallback_label, [""] + list(opts.keys()), index=0)
+            if chosen:
+                selected_position = opts[chosen]
+    if selected_position is None or selected_position < 0 or selected_position >= len(source_df):
+        return None
+    return source_df.reset_index(drop=True).iloc[selected_position]
+
+
 def render_metrics(df: pd.DataFrame, selected_table: str, prices: Dict[str, Dict[str, Any]], settings: Dict[str, Any]) -> None:
     cols = st.columns(6)
-    cols[0].metric("Matching farms", f"{len(df):,}")
-    cols[1].metric("Best EV / kill", f"{df['expected_value'].max() if len(df) and 'expected_value' in df else 0:,.0f}")
+    cols[0].metric("Matching mobs", f"{len(df):,}")
+    cols[1].metric("Highest EV / kill", f"{df['expected_value'].max() if len(df) and 'expected_value' in df else 0:,.0f}")
     cols[2].metric("Median EV / kill", f"{df['expected_value'].median() if len(df) and 'expected_value' in df else 0:,.0f}")
-    cols[3].metric("Best map score", f"{df['map_value_score'].max() if len(df) and 'map_value_score' in df else 0:,.0f}")
+    cols[3].metric("Highest map score", f"{df['map_value_score'].max() if len(df) and 'map_value_score' in df else 0:,.0f}")
     cols[4].metric("Drop multiplier", f"x{settings['multiplier']:g}")
     cols[5].metric("Price table", selected_table, f"{len(prices)} prices")
 
 
-def render_best_farms(df: pd.DataFrame) -> None:
-    st.subheader("Best farms")
-    st.caption("Map score is EV per kill multiplied by best-map spawn count. It is a practical density proxy, not zeny/hour.")
-    if df.empty:
-        st.info("No monsters match the current filters.")
-        return
-    for rank, (_, row) in enumerate(df.head(5).reset_index(drop=True).iterrows(), start=1):
-        st.markdown(f"#### #{rank} {row.get('name', 'Unknown')}")
-        cols = st.columns([1, 1, 1, 2])
-        cols[0].metric("EV / kill", f"{as_float(row.get('expected_value')):,.0f}z")
-        cols[1].metric("Map score", f"{as_float(row.get('map_value_score')):,.0f}")
-        cols[2].metric("Spawns", f"{as_int(row.get('best_map_count')):,}")
-        cols[3].markdown(f"**Map:** {row.get('best_map') or '-'}  \n**Profile:** {row.get('value_profile', 'Unknown')}  \n**Main value:** {row.get('top_drops') or row.get('drops_summary') or '-'}")
-        st.divider()
-    st.dataframe(clean_table(df), use_container_width=True, hide_index=True)
-
-
-def render_monster_details(df: pd.DataFrame, settings: Dict[str, Any], prices: Dict[str, Dict[str, Any]]) -> None:
-    st.subheader("Monster details")
-    if df.empty:
-        st.info("No monster is available under the current filters.")
-        return
-    opts = monster_options(df)
-    row = df.reset_index(drop=True).iloc[opts[st.selectbox("Choose a monster", list(opts.keys()))]]
+def render_selected_monster_drops(row: pd.Series, settings: Dict[str, Any], prices: Dict[str, Dict[str, Any]]) -> None:
+    st.subheader(f"Drops for {row.get('name', 'selected monster')}")
     cols = st.columns(6)
     cols[0].metric("Monster ID", str(row.get("id", "")))
     cols[1].metric("Level", str(row.get("level", "")))
@@ -422,16 +444,29 @@ def render_monster_details(df: pd.DataFrame, settings: Dict[str, Any], prices: D
     cols[3].metric("Best map", row.get("best_map") or "-")
     cols[4].metric("Spawns", f"{as_int(row.get('best_map_count')):,}")
     cols[5].metric("EV / kill", f"{as_float(row.get('expected_value')):,.2f}")
-    st.markdown(f"**Income profile:** {row.get('value_profile', 'Unknown')}  \n**Main value drops:** {row.get('top_drops') or '-'}  \n**EV / 1k HP:** {as_float(row.get('ev_per_1k_hp')):,.2f}")
     detail = drop_details_dataframe(parse_drops_json(row.get("drops_json", "")), settings["multiplier"], settings["use_overcharge"], settings["overcharge_rate"], settings["use_manual"], prices)
     if detail.empty:
         st.info(row.get("drops_summary") or "No drop details are available. Regenerate the CSV with drops_json if needed.")
         return
     capped = int((detail["Adjusted Chance"] >= 100.0).sum())
-    st.caption(f"Drop multiplier x{settings['multiplier']:g}; Overcharge {'on' if settings['use_overcharge'] else 'off'}; manual prices {'on' if settings['use_manual'] else 'off'}; capped drops: {capped}.")
+    st.caption(f"Main value: {summarize_drops(detail, 5) or '-'} | profile: {row.get('value_profile', 'Unknown')} | capped drops: {capped}")
     st.dataframe(detail, use_container_width=True, hide_index=True)
     with st.expander("Spawn summary"):
         st.write(str(row.get("spawn_summary") or "No spawn summary available."))
+
+
+def render_best_farms(df: pd.DataFrame, settings: Dict[str, Any], prices: Dict[str, Dict[str, Any]]) -> None:
+    st.subheader("Mobs")
+    st.caption("Filtered and sorted mob table. Select a row to inspect its drop value breakdown below.")
+    if df.empty:
+        st.info("No monsters match the current filters.")
+        return
+    source_df = df.reset_index(drop=True)
+    selected = select_row_from_table(clean_table(source_df), source_df, "Inspect monster drops")
+    if selected is not None:
+        render_selected_monster_drops(selected, settings, prices)
+    else:
+        st.info("Select a monster row above to show its drop value breakdown here.")
 
 
 def render_compare(df: pd.DataFrame) -> None:
@@ -448,19 +483,68 @@ def render_compare(df: pd.DataFrame) -> None:
     st.dataframe(compare, use_container_width=True, hide_index=True)
 
 
+def build_map_monster_rows(df: pd.DataFrame) -> pd.DataFrame:
+    rows = []
+    for source_idx, row in df.reset_index(drop=True).iterrows():
+        spawns = parse_spawn_summary(row.get("spawn_summary", ""))
+        if not spawns and str(row.get("best_map") or "").strip():
+            spawns = {str(row.get("best_map")).strip(): as_int(row.get("best_map_count"), 0)}
+        for map_name, count in spawns.items():
+            ev = as_float(row.get("expected_value"), 0.0)
+            rows.append(
+                {
+                    "source_idx": source_idx,
+                    "Map": map_name,
+                    "Monster": row.get("name"),
+                    "Spawn count": count,
+                    "EV / kill": ev,
+                    "Map score": ev * count,
+                    "EV / 1k HP": as_float(row.get("ev_per_1k_hp"), 0.0),
+                    "Income profile": row.get("value_profile"),
+                    "Main value drops": row.get("top_drops"),
+                    "Level": as_int(row.get("level"), 0),
+                    "HP": as_int(row.get("hp"), 0),
+                    "Element": row.get("element_display"),
+                    "ID": row.get("id"),
+                }
+            )
+    return pd.DataFrame(rows)
+
+
 def render_maps(df: pd.DataFrame) -> None:
-    st.subheader("Map view")
-    if df.empty or "best_map" not in df.columns:
+    st.subheader("Maps")
+    if df.empty:
         st.info("No map data is available under the current filters.")
         return
-    maps = df[df["best_map"].astype(str).str.strip() != ""].copy()
-    if maps.empty:
+    map_monsters = build_map_monster_rows(df)
+    if map_monsters.empty:
         st.info("No parsed spawn locations are available.")
         return
-    best_idx = maps.groupby("best_map")["map_value_score"].idxmax()
-    best = maps.loc[best_idx, ["best_map", "name", "map_value_score"]].rename(columns={"name": "Best monster", "map_value_score": "Best monster score"})
-    grouped = maps.groupby("best_map").agg(Monsters=("id", "count"), Total_spawns=("best_map_count", "sum"), Total_map_score=("map_value_score", "sum"), Average_EV=("expected_value", "mean"), Best_EV=("expected_value", "max")).reset_index().merge(best, on="best_map", how="left").sort_values("Total_map_score", ascending=False)
-    st.dataframe(grouped.rename(columns={"best_map": "Map"}), use_container_width=True, hide_index=True)
+    best_idx = map_monsters.groupby("Map")["Map score"].idxmax()
+    best = map_monsters.loc[best_idx, ["Map", "Monster", "Map score"]].rename(columns={"Monster": "Highest-score mob", "Map score": "Highest mob score"})
+    grouped = (
+        map_monsters.groupby("Map")
+        .agg(
+            Monsters=("Monster", "count"),
+            Total_spawns=("Spawn count", "sum"),
+            Total_map_score=("Map score", "sum"),
+            Average_EV=("EV / kill", "mean"),
+            Best_EV=("EV / kill", "max"),
+        )
+        .reset_index()
+        .merge(best, on="Map", how="left")
+        .sort_values("Total_map_score", ascending=False)
+        .reset_index(drop=True)
+    )
+    grouped_display = grouped.rename(columns={"Total_spawns": "Total spawns", "Total_map_score": "Total map score", "Average_EV": "Average EV", "Best_EV": "Best EV"})
+    selected = select_row_from_table(grouped_display, grouped, "Inspect map monsters")
+    if selected is None:
+        st.info("Select a map row above to show matching monsters here.")
+        return
+    selected_map = str(selected.get("Map") or "")
+    st.subheader(f"Monsters on {selected_map}")
+    detail = map_monsters[map_monsters["Map"] == selected_map].sort_values("Map score", ascending=False, kind="stable")
+    st.dataframe(detail.drop(columns=["source_idx"], errors="ignore"), use_container_width=True, hide_index=True)
 
 
 def render_prices(raw_df: pd.DataFrame, selected_table: str, prices: Dict[str, Dict[str, Any]]) -> None:
@@ -543,18 +627,16 @@ def main() -> None:
     filtered = filter_dataframe(df, settings)
     render_metrics(filtered, selected_table, prices, settings)
 
-    tabs = st.tabs(["Best farms", "Monster details", "Compare", "Maps", "Prices", "Raw data"])
+    tabs = st.tabs(["Best farms", "Compare", "Maps", "Prices", "Raw data"])
     with tabs[0]:
-        render_best_farms(filtered)
+        render_best_farms(filtered, settings, prices)
     with tabs[1]:
-        render_monster_details(filtered, settings, prices)
-    with tabs[2]:
         render_compare(filtered)
-    with tabs[3]:
+    with tabs[2]:
         render_maps(filtered)
-    with tabs[4]:
+    with tabs[3]:
         render_prices(raw_df, selected_table, prices)
-    with tabs[5]:
+    with tabs[4]:
         render_raw(filtered)
 
     with st.expander("How the numbers are interpreted"):
@@ -562,7 +644,7 @@ def main() -> None:
 - `EV / kill` is recalculated from `drops_json` using the current drop multiplier: **x{settings['multiplier']:g}**.
 - Each drop slot is capped at **100%** before EV is summed.
 - Manual player prices override NPC prices and do **not** receive Overcharge.
-- `Map score` is `EV / kill * best-map spawn count`; it is a simple density proxy, not zeny/hour.
+- `Map score` is `EV / kill * spawn count`; it is a simple density proxy, not zeny/hour.
 - `Income profile` estimates whether value is stable, swingy, or lottery-like based on top-drop concentration.
 - Boss-flagged monsters and monsters with MVP drops are hidden by default.
         """.strip())
