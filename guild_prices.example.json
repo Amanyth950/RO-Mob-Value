@@ -1,0 +1,18 @@
+{
+  "name": "Example guild prices",
+  "format": "uaro-mob-value.price-table.v1",
+  "prices": {
+    "Elunium": {
+      "name": "Elunium",
+      "price": 6000
+    },
+    "Oridecon": {
+      "name": "Oridecon",
+      "price": 4000
+    },
+    "Strawberry": {
+      "name": "Strawberry",
+      "price": 1200
+    }
+  }
+}
