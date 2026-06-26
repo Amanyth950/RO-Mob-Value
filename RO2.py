@@ -5,112 +5,14 @@ from typing import Any, Dict, Iterable, List, Tuple
 import pandas as pd
 import streamlit as st
 
-
 CSV_PATH = "monster_ev.csv"
 MANUAL_PRICE_PATH = "manual_prices.json"
+GUILD_PRICE_PATH = "guild_prices.json"
+GUILD_PRICE_EXAMPLE_PATH = "guild_prices.example.json"
+MANUAL_PRICE_EXAMPLE_PATH = "manual_prices.example.json"
 ELEMENT_PREFIXES = ("Ele_", "ELE_", "Element_", "ELEMENT_")
 
-st.set_page_config(page_title="RO Monster EV Explorer", layout="wide")
-st.title("RO Monster EV Explorer")
-st.caption("Hercules pre-renewal monster expected value explorer")
-
-
-def pretty_enum(value: Any) -> str:
-    if value is None:
-        return ""
-    text = str(value).strip()
-    if not text or text.lower() == "nan":
-        return ""
-    for prefix in ELEMENT_PREFIXES:
-        if text.startswith(prefix):
-            text = text[len(prefix):]
-            break
-    for prefix in ("RC_", "Size_"):
-        if text.startswith(prefix):
-            text = text[len(prefix):]
-            break
-    return text.replace("_", " ").strip()
-
-
-@st.cache_data
-def load_data(csv_path: str = CSV_PATH) -> pd.DataFrame:
-    path = Path(csv_path)
-    if not path.exists():
-        raise FileNotFoundError(f"Could not find {csv_path}. Run `python RO1.py` first and commit the generated CSV.")
-
-    df = pd.read_csv(path)
-
-    numeric_defaults = {
-        "id": 0,
-        "level": 0,
-        "hp": 0,
-        "base_exp": 0,
-        "job_exp": 0,
-        "best_map_count": 0,
-        "map_count": 0,
-        "total_spawn_count": 0,
-        "drop_count": 0,
-        "mvp_drop_count": 0,
-        "missing_item_count": 0,
-        "expected_value_raw": 0.0,
-        "expected_value": 0.0,
-        "ev_generation_drop_multiplier": 1.0,
-        "ev_overcharge_rate": 1.24,
-    }
-    for col, default in numeric_defaults.items():
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(default)
-            if isinstance(default, int):
-                df[col] = df[col].astype(int)
-
-    for col in ["is_boss", "has_mvp_drops", "ev_generation_cap_drop_rate", "mvp_drops_included_in_ev"]:
-        if col in df.columns:
-            df[col] = df[col].astype(str).str.lower().isin(["true", "1", "yes"])
-
-    text_columns = [
-        "name",
-        "sprite_name",
-        "internal_name",
-        "best_map",
-        "race",
-        "size",
-        "element",
-        "spawn_summary",
-        "drops_summary",
-        "drops_json",
-        "ev_sell_mode",
-    ]
-    for col in text_columns:
-        if col in df.columns:
-            df[col] = df[col].fillna("").astype(str)
-
-    if "element" in df.columns:
-        df["element_display"] = df["element"].apply(pretty_enum)
-    else:
-        df["element_display"] = ""
-
-    return df
-
-
-def safe_min_max(series: pd.Series, default_min: int = 0, default_max: int = 0) -> Tuple[int, int]:
-    if series.empty:
-        return default_min, default_max
-    return int(series.min()), int(series.max())
-
-
-def parse_drops_json(value: Any) -> List[Dict[str, Any]]:
-    if value is None:
-        return []
-    text = str(value).strip()
-    if not text or text.lower() == "nan":
-        return []
-    try:
-        parsed = json.loads(text)
-    except json.JSONDecodeError:
-        return []
-    if not isinstance(parsed, list):
-        return []
-    return [drop for drop in parsed if isinstance(drop, dict)]
+st.set_page_config(page_title="uaRO Farming Planner", layout="wide")
 
 
 def as_float(value: Any, default: float = 0.0) -> float:
@@ -131,104 +33,159 @@ def as_int(value: Any, default: int = 0) -> int:
         return default
 
 
+def pretty_enum(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text or text.lower() == "nan":
+        return ""
+    for prefix in ELEMENT_PREFIXES + ("RC_", "Size_"):
+        if text.startswith(prefix):
+            text = text[len(prefix) :]
+            break
+    return text.replace("_", " ").strip()
+
+
+def numeric_series(df: pd.DataFrame, col: str, default: float = 0.0) -> pd.Series:
+    if col in df.columns:
+        return pd.to_numeric(df[col], errors="coerce").fillna(default)
+    return pd.Series(default, index=df.index, dtype="float64")
+
+
+def safe_min_max(series: pd.Series, default_min: int = 0, default_max: int = 0) -> Tuple[int, int]:
+    numeric = pd.to_numeric(series, errors="coerce").dropna()
+    if numeric.empty:
+        return default_min, default_max
+    return int(numeric.min()), int(numeric.max())
+
+
+@st.cache_data
+def load_data(csv_path: str = CSV_PATH) -> pd.DataFrame:
+    path = Path(csv_path)
+    if not path.exists():
+        raise FileNotFoundError(f"Could not find {csv_path}. Run `python generate_monster_ev.py` and commit the CSV.")
+    try:
+        df = pd.read_csv(path)
+    except pd.errors.EmptyDataError:
+        return pd.DataFrame()
+
+    numeric_defaults = {
+        "id": 0,
+        "level": 0,
+        "hp": 0,
+        "best_map_count": 0,
+        "map_count": 0,
+        "total_spawn_count": 0,
+        "drop_count": 0,
+        "mvp_drop_count": 0,
+        "missing_item_count": 0,
+        "expected_value_raw": 0.0,
+        "expected_value": 0.0,
+    }
+    for col, default in numeric_defaults.items():
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(default)
+            if isinstance(default, int):
+                df[col] = df[col].astype(int)
+
+    for col in ["is_boss", "has_mvp_drops", "ev_generation_cap_drop_rate", "mvp_drops_included_in_ev"]:
+        if col in df.columns:
+            df[col] = df[col].astype(str).str.lower().isin(["true", "1", "yes"])
+
+    for col in ["name", "sprite_name", "internal_name", "best_map", "race", "size", "element", "spawn_summary", "drops_summary", "drops_json"]:
+        if col in df.columns:
+            df[col] = df[col].fillna("").astype(str)
+
+    df["element_display"] = df["element"].apply(pretty_enum) if "element" in df.columns else ""
+    return df
+
+
+def parse_drops_json(value: Any) -> List[Dict[str, Any]]:
+    text = str(value or "").strip()
+    if not text or text.lower() == "nan":
+        return []
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        return []
+    return [drop for drop in parsed if isinstance(drop, dict)] if isinstance(parsed, list) else []
+
+
 def drop_item_key(drop: Dict[str, Any]) -> str:
     return str(drop.get("aegis_name") or drop.get("name") or "").strip()
 
 
 def normalize_manual_prices(raw: Any) -> Dict[str, Dict[str, Any]]:
-    normalized: Dict[str, Dict[str, Any]] = {}
     if not isinstance(raw, dict):
-        return normalized
-
+        return {}
+    if isinstance(raw.get("prices"), dict):
+        raw = raw["prices"]
+    prices: Dict[str, Dict[str, Any]] = {}
     for key, value in raw.items():
         item_key = str(key).strip()
         if not item_key:
             continue
-
         if isinstance(value, dict):
             price = as_float(value.get("price"), -1.0)
             name = str(value.get("name") or value.get("item") or item_key).strip()
         else:
             price = as_float(value, -1.0)
             name = item_key
-
         if price >= 0:
-            normalized[item_key] = {"name": name or item_key, "price": float(price)}
-    return normalized
+            prices[item_key] = {"name": name or item_key, "price": float(price)}
+    return prices
 
 
-def load_manual_prices(path: str | Path = MANUAL_PRICE_PATH) -> Dict[str, Dict[str, Any]]:
+def load_price_file(path: str | Path) -> Dict[str, Dict[str, Any]]:
     price_path = Path(path)
     if not price_path.exists():
         return {}
     try:
-        raw = json.loads(price_path.read_text(encoding="utf-8"))
+        return normalize_manual_prices(json.loads(price_path.read_text(encoding="utf-8")))
     except Exception:
-        st.sidebar.warning(f"Could not read manual price file: {price_path}")
         return {}
-    return normalize_manual_prices(raw)
 
 
-def save_manual_prices(path: str | Path, manual_prices: Dict[str, Dict[str, Any]]) -> None:
-    price_path = Path(path)
-    if str(price_path.parent) not in ("", "."):
-        price_path.parent.mkdir(parents=True, exist_ok=True)
-    clean = {
-        str(key): {
-            "name": str(value.get("name") or key),
-            "price": int(value.get("price")) if float(value.get("price", 0)).is_integer() else float(value.get("price", 0)),
-        }
-        for key, value in sorted(manual_prices.items(), key=lambda item: str(item[1].get("name") or item[0]).lower())
+def export_price_payload(prices: Dict[str, Dict[str, Any]], name: str) -> Dict[str, Any]:
+    clean = {}
+    for key, value in sorted(prices.items(), key=lambda item: str(item[1].get("name") or item[0]).lower()):
+        price = as_float(value.get("price"), 0.0)
+        clean[str(key)] = {"name": str(value.get("name") or key), "price": int(price) if price.is_integer() else price}
+    return {"name": name, "format": "uaro-mob-value.price-table.v1", "prices": clean}
+
+
+def init_price_state() -> None:
+    if "personal_prices" not in st.session_state:
+        st.session_state.personal_prices = load_price_file(MANUAL_PRICE_PATH)
+    if "imported_prices" not in st.session_state:
+        st.session_state.imported_prices = {}
+    if "imported_table_name" not in st.session_state:
+        st.session_state.imported_table_name = "Imported/shared table"
+
+
+def load_guild_prices() -> Tuple[str, Dict[str, Dict[str, Any]]]:
+    for label, path in [
+        ("Guild default", GUILD_PRICE_PATH),
+        ("Example guild table", GUILD_PRICE_EXAMPLE_PATH),
+        ("Example price table", MANUAL_PRICE_EXAMPLE_PATH),
+    ]:
+        prices = load_price_file(path)
+        if prices:
+            return label, prices
+    return "Guild default", {}
+
+
+def get_price_tables() -> Dict[str, Dict[str, Any]]:
+    guild_label, guild_prices = load_guild_prices()
+    return {
+        "NPC only": {"prices": {}, "visibility": "built-in"},
+        guild_label: {"prices": guild_prices, "visibility": "read-only"},
+        "Personal session": {"prices": st.session_state.personal_prices, "visibility": "private/session"},
+        st.session_state.imported_table_name: {"prices": st.session_state.imported_prices, "visibility": "imported/session"},
     }
-    price_path.write_text(json.dumps(clean, ensure_ascii=False, indent=2), encoding="utf-8")
-
-
-def rerun_app() -> None:
-    try:
-        st.rerun()
-    except AttributeError:
-        try:
-            st.experimental_rerun()
-        except AttributeError:
-            pass
-
-
-def extract_item_catalog(df: pd.DataFrame) -> pd.DataFrame:
-    catalog: Dict[str, Dict[str, Any]] = {}
-    if "drops_json" not in df.columns:
-        return pd.DataFrame(columns=["key", "name", "aegis_name", "base_sell_price", "drop_slots"])
-
-    for drops in df["drops_json"].apply(parse_drops_json):
-        for drop in drops:
-            key = drop_item_key(drop)
-            if not key:
-                continue
-            name = str(drop.get("name") or key).strip() or key
-            aegis_name = str(drop.get("aegis_name") or key).strip() or key
-            base_sell = as_float(drop.get("base_sell_price", drop.get("sell_price")), 0.0)
-            entry = catalog.setdefault(
-                key,
-                {
-                    "key": key,
-                    "name": name,
-                    "aegis_name": aegis_name,
-                    "base_sell_price": base_sell,
-                    "drop_slots": 0,
-                },
-            )
-            entry["drop_slots"] += 1
-            if not entry.get("base_sell_price") and base_sell:
-                entry["base_sell_price"] = base_sell
-
-    if not catalog:
-        return pd.DataFrame(columns=["key", "name", "aegis_name", "base_sell_price", "drop_slots"])
-    return pd.DataFrame(catalog.values()).sort_values(["name", "aegis_name"], kind="stable").reset_index(drop=True)
 
 
 def manual_price_for_drop(drop: Dict[str, Any], manual_prices: Dict[str, Dict[str, Any]]) -> float | None:
-    keys = [drop_item_key(drop), str(drop.get("name") or "").strip()]
-    for key in keys:
-        if key and key in manual_prices:
+    for key in [drop_item_key(drop), str(drop.get("name") or "").strip()]:
+        if key in manual_prices:
             price = as_float(manual_prices[key].get("price"), -1.0)
             if price >= 0:
                 return price
@@ -239,564 +196,376 @@ def adjusted_drop_chance(raw_chance: Any, multiplier: float) -> float:
     return min(max(as_float(raw_chance, 0.0) * multiplier, 0.0), 10000.0)
 
 
-def price_source_for_drop(
-    drop: Dict[str, Any],
-    use_overcharge: bool,
-    use_manual_prices: bool,
-    manual_prices: Dict[str, Dict[str, Any]],
-) -> str:
-    if use_manual_prices and manual_price_for_drop(drop, manual_prices) is not None:
+def price_source(drop: Dict[str, Any], use_overcharge: bool, use_manual: bool, prices: Dict[str, Dict[str, Any]]) -> str:
+    if use_manual and manual_price_for_drop(drop, prices) is not None:
         return "Manual"
     if use_overcharge and not bool(drop.get("ignore_overcharge")):
         return "NPC + Overcharge"
     return "NPC"
 
 
-def effective_sell_price(
-    drop: Dict[str, Any],
-    use_overcharge: bool,
-    overcharge_rate: float,
-    use_manual_prices: bool = False,
-    manual_prices: Dict[str, Dict[str, Any]] | None = None,
-) -> float:
-    manual_prices = manual_prices or {}
-    if use_manual_prices:
-        manual_price = manual_price_for_drop(drop, manual_prices)
-        if manual_price is not None:
-            return manual_price
-
-    base_price = as_float(drop.get("base_sell_price", drop.get("sell_price")), 0.0)
-    if use_overcharge and not bool(drop.get("ignore_overcharge")):
-        return int(base_price * overcharge_rate)
-    return base_price
+def effective_sell_price(drop: Dict[str, Any], use_overcharge: bool, overcharge_rate: float, use_manual: bool, prices: Dict[str, Dict[str, Any]]) -> float:
+    manual = manual_price_for_drop(drop, prices) if use_manual else None
+    if manual is not None:
+        return manual
+    base = as_float(drop.get("base_sell_price", drop.get("sell_price")), 0.0)
+    return int(base * overcharge_rate) if use_overcharge and not bool(drop.get("ignore_overcharge")) else base
 
 
-def recalc_ev_from_drops(
-    drops: Iterable[Dict[str, Any]],
-    multiplier: float,
-    use_overcharge: bool,
-    overcharge_rate: float,
-    use_manual_prices: bool = False,
-    manual_prices: Dict[str, Dict[str, Any]] | None = None,
-) -> float:
-    total = 0.0
+def drop_details_dataframe(drops: Iterable[Dict[str, Any]], multiplier: float, use_overcharge: bool, overcharge_rate: float, use_manual: bool, prices: Dict[str, Dict[str, Any]]) -> pd.DataFrame:
+    rows = []
     for drop in drops:
-        if drop.get("missing_item"):
-            continue
-        sell_price = effective_sell_price(drop, use_overcharge, overcharge_rate, use_manual_prices, manual_prices)
-        raw_chance = as_float(drop.get("raw_chance"), 0.0)
-        total += sell_price * (adjusted_drop_chance(raw_chance, multiplier) / 10000.0)
-    return total
-
-
-def adjusted_drop_summary(
-    drops: Iterable[Dict[str, Any]],
-    multiplier: float,
-    use_overcharge: bool,
-    overcharge_rate: float,
-    use_manual_prices: bool = False,
-    manual_prices: Dict[str, Dict[str, Any]] | None = None,
-    limit: int = 12,
-) -> str:
-    pieces: List[Tuple[float, str]] = []
-    for drop in drops:
-        name = str(drop.get("name") or drop.get("aegis_name") or "").strip()
-        if not name:
-            continue
-        adjusted = adjusted_drop_chance(drop.get("raw_chance"), multiplier)
-        sell_price = as_int(effective_sell_price(drop, use_overcharge, overcharge_rate, use_manual_prices, manual_prices), 0)
-        source = price_source_for_drop(drop, use_overcharge, use_manual_prices, manual_prices or {})
-        marker = " MVP" if bool(drop.get("is_mvp_drop")) else ""
-        missing = " missing" if bool(drop.get("missing_item")) else ""
-        pieces.append((sell_price * (adjusted / 10000.0), f"{name}{marker} @ {adjusted / 100:.2f}% x {sell_price}z [{source}]{missing}"))
-    pieces.sort(key=lambda item: item[0], reverse=True)
-    return "; ".join(piece for _, piece in pieces[:limit])
-
-
-def apply_ui_ev_settings(
-    df: pd.DataFrame,
-    multiplier: float,
-    use_overcharge: bool,
-    overcharge_rate: float,
-    use_manual_prices: bool,
-    manual_prices: Dict[str, Dict[str, Any]],
-) -> pd.DataFrame:
-    df = df.copy()
-    if "drops_json" not in df.columns:
-        df["ev_recalculated_in_ui"] = False
-        return df
-
-    parsed = df["drops_json"].apply(parse_drops_json)
-    has_details = parsed.apply(bool)
-    if has_details.any():
-        df["expected_value_base_rate"] = df.get("expected_value_raw", df.get("expected_value", 0.0))
-        recalculated = parsed.apply(
-            lambda drops: recalc_ev_from_drops(drops, multiplier, use_overcharge, overcharge_rate, use_manual_prices, manual_prices)
-        )
-        adjusted_summary = parsed.apply(
-            lambda drops: adjusted_drop_summary(drops, multiplier, use_overcharge, overcharge_rate, use_manual_prices, manual_prices)
-        )
-        df.loc[has_details, "expected_value"] = recalculated[has_details]
-        df.loc[has_details, "adjusted_drops_summary"] = adjusted_summary[has_details]
-        df["ev_recalculated_in_ui"] = has_details
-    else:
-        df["ev_recalculated_in_ui"] = False
-    return df
-
-
-def render_manual_price_controls(df: pd.DataFrame) -> Tuple[bool, Dict[str, Dict[str, Any]]]:
-    st.sidebar.header("Manual Prices")
-    price_file = st.sidebar.text_input(
-        "Manual price file",
-        value=MANUAL_PRICE_PATH,
-        help="Stored next to the app. On public hosting, prefer curated prices or user import/export in a future version.",
-    )
-    manual_prices = load_manual_prices(price_file)
-    use_manual_prices = st.sidebar.checkbox(
-        "Use manual player prices",
-        value=bool(manual_prices),
-        help="When enabled, configured player-trade prices override NPC sell values and do not receive Overcharge.",
-    )
-
-    item_catalog = extract_item_catalog(df)
-    st.sidebar.caption(f"{len(manual_prices)} manual price override(s) loaded.")
-
-    with st.sidebar.expander("Edit manual prices", expanded=False):
-        if item_catalog.empty:
-            st.info("No item catalog is available. Regenerate monster_ev.csv with a RO1.py version that writes drops_json.")
-            return use_manual_prices, manual_prices
-
-        def format_item(key: str) -> str:
-            match = item_catalog[item_catalog["key"] == key]
-            if match.empty:
-                return key
-            row = match.iloc[0]
-            base = as_int(row.get("base_sell_price"), 0)
-            aegis = str(row.get("aegis_name") or key)
-            name = str(row.get("name") or key)
-            if aegis and aegis != name:
-                return f"{name} ({aegis}) — NPC {base:,}z"
-            return f"{name} — NPC {base:,}z"
-
-        keys = item_catalog["key"].tolist()
-        selected_key = st.selectbox("Item", options=keys, format_func=format_item)
-        selected_row = item_catalog[item_catalog["key"] == selected_key].iloc[0]
-        selected_name = str(selected_row.get("name") or selected_key)
-        base_price = as_int(selected_row.get("base_sell_price"), 0)
-        existing_price = manual_prices.get(selected_key, {}).get("price")
-        default_price = int(existing_price) if existing_price is not None else max(base_price, 0)
-
-        manual_price = st.number_input(
-            "Manual player price",
-            min_value=0,
-            value=default_price,
-            step=100,
-            help="This value is treated as a player-trade price. Overcharge is not applied to it.",
-        )
-        col_save, col_remove = st.columns(2)
-        if col_save.button("Save price", use_container_width=True):
-            manual_prices[selected_key] = {"name": selected_name, "price": int(manual_price)}
-            save_manual_prices(price_file, manual_prices)
-            st.success(f"Saved {selected_name}: {int(manual_price):,}z")
-            rerun_app()
-
-        remove_disabled = selected_key not in manual_prices
-        if col_remove.button("Remove", use_container_width=True, disabled=remove_disabled):
-            manual_prices.pop(selected_key, None)
-            save_manual_prices(price_file, manual_prices)
-            st.success(f"Removed manual price for {selected_name}")
-            rerun_app()
-
-        if manual_prices:
-            existing_rows = [
-                {
-                    "Item": value.get("name") or key,
-                    "AegisName": key,
-                    "Manual Price": as_int(value.get("price"), 0),
-                }
-                for key, value in sorted(manual_prices.items(), key=lambda item: str(item[1].get("name") or item[0]).lower())
-            ]
-            st.dataframe(
-                pd.DataFrame(existing_rows),
-                use_container_width=True,
-                hide_index=True,
-                column_config={"Manual Price": st.column_config.NumberColumn("Manual Price", format="%d z")},
-            )
-            if st.button("Clear all manual prices", use_container_width=True):
-                save_manual_prices(price_file, {})
-                st.success("Cleared all manual prices")
-                rerun_app()
-        else:
-            st.caption("No manual prices saved yet.")
-
-    return use_manual_prices, manual_prices
-
-
-def drop_details_dataframe(
-    drops: Iterable[Dict[str, Any]],
-    multiplier: float,
-    use_overcharge: bool,
-    overcharge_rate: float,
-    use_manual_prices: bool,
-    manual_prices: Dict[str, Dict[str, Any]],
-) -> pd.DataFrame:
-    rows: List[Dict[str, Any]] = []
-    for drop in drops:
-        item_name = str(drop.get("name") or drop.get("aegis_name") or "").strip()
-        aegis_name = str(drop.get("aegis_name") or "").strip()
-        raw_chance = as_float(drop.get("raw_chance"), 0.0)
-        adjusted_chance = adjusted_drop_chance(raw_chance, multiplier)
-        base_sell_price = as_float(drop.get("base_sell_price", drop.get("sell_price")), 0.0)
-        manual_price = manual_price_for_drop(drop, manual_prices) if use_manual_prices else None
-        sell_price = effective_sell_price(drop, use_overcharge, overcharge_rate, use_manual_prices, manual_prices)
-        ev = 0.0 if bool(drop.get("missing_item")) else sell_price * (adjusted_chance / 10000.0)
+        raw = as_float(drop.get("raw_chance"), 0.0)
+        adjusted = adjusted_drop_chance(raw, multiplier)
+        manual = manual_price_for_drop(drop, prices) if use_manual else None
+        sell = effective_sell_price(drop, use_overcharge, overcharge_rate, use_manual, prices)
+        ev = 0.0 if bool(drop.get("missing_item")) else sell * adjusted / 10000.0
         rows.append(
             {
-                "Item": item_name or aegis_name,
-                "Adjusted Chance": adjusted_chance / 100.0,
-                "Effective Sell": int(sell_price) if float(sell_price).is_integer() else sell_price,
-                "Price Source": price_source_for_drop(drop, use_overcharge, use_manual_prices, manual_prices),
+                "Item": str(drop.get("name") or drop.get("aegis_name") or ""),
                 "Adjusted EV": ev,
-                "Base Chance": raw_chance / 100.0,
-                "Base Sell": int(base_sell_price) if base_sell_price.is_integer() else base_sell_price,
-                "Manual Price": "" if manual_price is None else int(manual_price) if float(manual_price).is_integer() else manual_price,
+                "Adjusted Chance": adjusted / 100.0,
+                "Effective Sell": int(sell) if float(sell).is_integer() else sell,
+                "Price Source": price_source(drop, use_overcharge, use_manual, prices),
+                "Base Chance": raw / 100.0,
+                "Base Sell": as_int(drop.get("base_sell_price", drop.get("sell_price")), 0),
+                "Manual Price": "" if manual is None else int(manual) if float(manual).is_integer() else manual,
                 "Type": "MVP" if bool(drop.get("is_mvp_drop")) else "Normal",
-                "AegisName": aegis_name,
-                "Overcharge Ignored": bool(drop.get("ignore_overcharge")) or manual_price is not None,
+                "AegisName": str(drop.get("aegis_name") or ""),
                 "Missing Item": bool(drop.get("missing_item")),
             }
         )
-
-    detail_df = pd.DataFrame(rows)
-    if detail_df.empty:
-        return detail_df
-
-    total_ev = float(detail_df["Adjusted EV"].sum())
-    detail_df["EV Share"] = detail_df["Adjusted EV"] / total_ev * 100.0 if total_ev > 0 else 0.0
-
-    preferred_order = [
-        "Item",
-        "Adjusted Chance",
-        "Effective Sell",
-        "EV Share",
-        "Price Source",
-        "Adjusted EV",
-        "Base Chance",
-        "Base Sell",
-        "Manual Price",
-        "Type",
-        "AegisName",
-        "Overcharge Ignored",
-        "Missing Item",
-    ]
-    remaining = [col for col in detail_df.columns if col not in preferred_order]
-    return detail_df[preferred_order + remaining].sort_values("Adjusted EV", ascending=False, kind="stable").reset_index(drop=True)
+    detail = pd.DataFrame(rows)
+    if detail.empty:
+        return detail
+    total = as_float(detail["Adjusted EV"].sum(), 0.0)
+    detail["EV Share"] = detail["Adjusted EV"] / total * 100.0 if total > 0 else 0.0
+    return detail.sort_values("Adjusted EV", ascending=False, kind="stable").reset_index(drop=True)
 
 
-def render_selected_monster_drops(
-    row: pd.Series,
-    multiplier: float,
-    use_overcharge: bool,
-    overcharge_rate: float,
-    use_manual_prices: bool,
-    manual_prices: Dict[str, Dict[str, Any]],
-) -> None:
-    name = str(row.get("name", "Selected monster"))
-    st.subheader(f"Drops for {name}")
+def summarize_drops(detail: pd.DataFrame, limit: int = 3) -> str:
+    if detail.empty:
+        return ""
+    return ", ".join(f"{row['Item']} ({as_float(row['EV Share']):.0f}%)" for _, row in detail.head(limit).iterrows())
 
-    meta_cols = st.columns(5)
-    meta_cols[0].metric("Monster ID", str(row.get("id", "")))
-    meta_cols[1].metric("Level", str(row.get("level", "")))
-    meta_cols[2].metric("Element", str(row.get("element_display", row.get("element", ""))) or "-")
-    meta_cols[3].metric("Best map", str(row.get("best_map", "")) or "-")
-    meta_cols[4].metric("Adjusted EV", f"{as_float(row.get('expected_value'), 0.0):,.2f}")
 
-    drops = parse_drops_json(row.get("drops_json", ""))
-    if not drops:
-        fallback = str(row.get("adjusted_drops_summary") or row.get("drops_summary") or "").strip()
-        st.info(fallback or "No drop details are available for this monster. Regenerate the CSV with the updated RO1.py if needed.")
+def profile_from_detail(detail: pd.DataFrame) -> Tuple[str, float]:
+    if detail.empty or as_float(detail["Adjusted EV"].sum(), 0.0) <= 0:
+        return "No value", 0.0
+    total = as_float(detail["Adjusted EV"].sum(), 0.0)
+    top_share = as_float(detail["Adjusted EV"].max(), 0.0) / total * 100.0
+    if top_share >= 70:
+        return "Lottery", top_share
+    if top_share >= 45 or int((detail["Adjusted EV"] > 0).sum()) <= 2:
+        return "Swingy", top_share
+    return "Stable", top_share
+
+
+def recalc_monster(row: pd.Series, multiplier: float, use_overcharge: bool, overcharge_rate: float, use_manual: bool, prices: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
+    detail = drop_details_dataframe(parse_drops_json(row.get("drops_json", "")), multiplier, use_overcharge, overcharge_rate, use_manual, prices)
+    profile, top_share = profile_from_detail(detail)
+    return {"expected_value": as_float(detail["Adjusted EV"].sum(), 0.0) if not detail.empty else as_float(row.get("expected_value"), 0.0), "top_drops": summarize_drops(detail), "value_profile": profile, "top_value_share": top_share}
+
+
+def apply_ui_ev_settings(df: pd.DataFrame, multiplier: float, use_overcharge: bool, overcharge_rate: float, use_manual: bool, prices: Dict[str, Dict[str, Any]]) -> pd.DataFrame:
+    df = df.copy()
+    if df.empty or "drops_json" not in df.columns:
+        return df
+    derived = df.apply(lambda row: recalc_monster(row, multiplier, use_overcharge, overcharge_rate, use_manual, prices), axis=1)
+    df["expected_value"] = derived.apply(lambda d: d["expected_value"])
+    df["top_drops"] = derived.apply(lambda d: d["top_drops"])
+    df["value_profile"] = derived.apply(lambda d: d["value_profile"])
+    df["top_value_share"] = derived.apply(lambda d: d["top_value_share"])
+    expected = numeric_series(df, "expected_value")
+    hp = numeric_series(df, "hp")
+    spawns = numeric_series(df, "best_map_count")
+    df["ev_per_1k_hp"] = expected.divide(hp.where(hp > 0)).fillna(0.0) * 1000.0
+    df["map_value_score"] = expected * spawns
+    return df
+
+
+def extract_item_catalog(df: pd.DataFrame) -> pd.DataFrame:
+    catalog: Dict[str, Dict[str, Any]] = {}
+    if "drops_json" not in df.columns:
+        return pd.DataFrame(columns=["key", "name", "aegis_name", "base_sell_price", "drop_slots"])
+    for drops in df["drops_json"].apply(parse_drops_json):
+        for drop in drops:
+            key = drop_item_key(drop)
+            if not key:
+                continue
+            entry = catalog.setdefault(key, {"key": key, "name": str(drop.get("name") or key), "aegis_name": key, "base_sell_price": as_float(drop.get("base_sell_price", drop.get("sell_price")), 0.0), "drop_slots": 0})
+            entry["drop_slots"] += 1
+    return pd.DataFrame(catalog.values()).sort_values(["name", "aegis_name"], kind="stable").reset_index(drop=True) if catalog else pd.DataFrame(columns=["key", "name", "aegis_name", "base_sell_price", "drop_slots"])
+
+
+def render_sidebar(df: pd.DataFrame) -> Tuple[Dict[str, Any], str, Dict[str, Dict[str, Any]]]:
+    st.sidebar.header("Assumptions")
+    multiplier = st.sidebar.number_input("Drop rate multiplier", min_value=0.0, value=5.0, step=0.5)
+    use_overcharge = st.sidebar.checkbox("Apply merchant Overcharge (+24%)", value=True)
+    overcharge_rate = st.sidebar.number_input("Overcharge multiplier", min_value=1.0, value=1.24, step=0.01, format="%.2f", disabled=not use_overcharge)
+    tables = get_price_tables()
+    selected_table = st.sidebar.selectbox("Price table", list(tables.keys()), index=1 if len(tables) > 1 else 0)
+    prices = tables[selected_table]["prices"]
+    st.sidebar.caption(f"{len(prices):,} manual price override(s).")
+
+    st.sidebar.header("Farm filters")
+    name_query = st.sidebar.text_input("Monster name contains", value="")
+    map_query = st.sidebar.text_input("Map contains", value="")
+    element_map: Dict[str, List[str]] = {}
+    if "element" in df.columns and not df.empty:
+        pairs = df[["element", "element_display"]].drop_duplicates().sort_values(["element_display", "element"])
+        for _, row in pairs.iterrows():
+            raw = str(row.get("element") or "").strip()
+            label = str(row.get("element_display") or raw).strip()
+            if raw:
+                element_map.setdefault(label, []).append(raw)
+    selected_elements = st.sidebar.multiselect("Element", list(element_map.keys()), default=[])
+    lvl_min, lvl_max = safe_min_max(df["level"] if "level" in df.columns else pd.Series(dtype=int))
+    level_range = st.sidebar.slider("Level range", lvl_min, lvl_max, (lvl_min, lvl_max))
+    sp_min, sp_max = safe_min_max(df["best_map_count"] if "best_map_count" in df.columns else pd.Series(dtype=int))
+    spawn_range = st.sidebar.slider("Best-map spawn count", sp_min, sp_max, (max(1, sp_min) if sp_max >= 1 else sp_min, sp_max))
+    min_ev = st.sidebar.number_input("Minimum EV / kill", min_value=0.0, value=0.0, step=1.0)
+    include_boss = st.sidebar.checkbox("Include boss-flagged monsters", value=False) if "is_boss" in df.columns else True
+    include_mvp = st.sidebar.checkbox("Include monsters with MVP drops", value=False) if "has_mvp_drops" in df.columns else True
+    sort_candidates = [c for c in ["map_value_score", "expected_value", "ev_per_1k_hp", "best_map_count", "level", "hp", "name"] if c in df.columns or c in {"map_value_score", "ev_per_1k_hp"}]
+    sort_by = st.sidebar.selectbox("Sort by", sort_candidates, index=0 if sort_candidates else None)
+    ascending = st.sidebar.checkbox("Ascending sort", value=False)
+    settings = {"multiplier": multiplier, "use_overcharge": use_overcharge, "overcharge_rate": overcharge_rate, "use_manual": selected_table != "NPC only", "name_query": name_query, "map_query": map_query, "element_map": element_map, "selected_elements": selected_elements, "level_range": level_range, "spawn_range": spawn_range, "min_ev": min_ev, "include_boss": include_boss, "include_mvp": include_mvp, "sort_by": sort_by, "ascending": ascending}
+    return settings, selected_table, prices
+
+
+def filter_dataframe(df: pd.DataFrame, s: Dict[str, Any]) -> pd.DataFrame:
+    out = df.copy()
+    if s["selected_elements"] and "element" in out.columns:
+        allowed = {raw for label in s["selected_elements"] for raw in s["element_map"].get(label, [])}
+        out = out[out["element"].isin(allowed)]
+    if "level" in out.columns:
+        out = out[(out["level"] >= s["level_range"][0]) & (out["level"] <= s["level_range"][1])]
+    if "best_map_count" in out.columns:
+        out = out[(out["best_map_count"] >= s["spawn_range"][0]) & (out["best_map_count"] <= s["spawn_range"][1])]
+    if "expected_value" in out.columns:
+        out = out[out["expected_value"] >= s["min_ev"]]
+    if s["name_query"].strip() and "name" in out.columns:
+        q = s["name_query"].strip().lower()
+        mask = out["name"].str.lower().str.contains(q, regex=False)
+        for col in ["sprite_name", "internal_name"]:
+            if col in out.columns:
+                mask = mask | out[col].str.lower().str.contains(q, regex=False)
+        out = out[mask]
+    if s["map_query"].strip() and "best_map" in out.columns:
+        q = s["map_query"].strip().lower()
+        mask = out["best_map"].str.lower().str.contains(q, regex=False)
+        if "spawn_summary" in out.columns:
+            mask = mask | out["spawn_summary"].str.lower().str.contains(q, regex=False)
+        out = out[mask]
+    if not s["include_boss"] and "is_boss" in out.columns:
+        out = out[~out["is_boss"]]
+    if not s["include_mvp"] and "has_mvp_drops" in out.columns:
+        out = out[~out["has_mvp_drops"]]
+    if s["sort_by"]:
+        out = out.sort_values(s["sort_by"], ascending=s["ascending"], kind="stable")
+    return out
+
+
+def clean_table(df: pd.DataFrame) -> pd.DataFrame:
+    cols = ["name", "expected_value", "map_value_score", "ev_per_1k_hp", "value_profile", "top_drops", "level", "hp", "element_display", "best_map", "best_map_count", "is_boss", "has_mvp_drops", "id"]
+    visible = [c for c in cols if c in df.columns]
+    return df[visible].rename(columns={"name": "Monster", "expected_value": "EV / kill", "map_value_score": "Map score", "ev_per_1k_hp": "EV / 1k HP", "value_profile": "Income profile", "top_drops": "Main value drops", "element_display": "Element", "best_map": "Best map", "best_map_count": "Best-map spawns", "is_boss": "Boss", "has_mvp_drops": "Has MVP drops", "id": "ID", "level": "Level", "hp": "HP"})
+
+
+def monster_options(df: pd.DataFrame) -> Dict[str, int]:
+    opts = {}
+    for idx, row in df.reset_index(drop=True).iterrows():
+        label = f"{row.get('name') or row.get('internal_name') or 'Unknown'} - ID {row.get('id', '')} - {row.get('best_map') or 'no map'}"
+        opts[label if label not in opts else f"{label} ({idx})"] = idx
+    return opts
+
+
+def render_metrics(df: pd.DataFrame, selected_table: str, prices: Dict[str, Dict[str, Any]], settings: Dict[str, Any]) -> None:
+    cols = st.columns(6)
+    cols[0].metric("Matching farms", f"{len(df):,}")
+    cols[1].metric("Best EV / kill", f"{df['expected_value'].max() if len(df) and 'expected_value' in df else 0:,.0f}")
+    cols[2].metric("Median EV / kill", f"{df['expected_value'].median() if len(df) and 'expected_value' in df else 0:,.0f}")
+    cols[3].metric("Best map score", f"{df['map_value_score'].max() if len(df) and 'map_value_score' in df else 0:,.0f}")
+    cols[4].metric("Drop multiplier", f"x{settings['multiplier']:g}")
+    cols[5].metric("Price table", selected_table, f"{len(prices)} prices")
+
+
+def render_best_farms(df: pd.DataFrame) -> None:
+    st.subheader("Best farms")
+    st.caption("Map score is EV per kill multiplied by best-map spawn count. It is a practical density proxy, not zeny/hour.")
+    if df.empty:
+        st.info("No monsters match the current filters.")
         return
+    for rank, (_, row) in enumerate(df.head(5).reset_index(drop=True).iterrows(), start=1):
+        st.markdown(f"#### #{rank} {row.get('name', 'Unknown')}")
+        cols = st.columns([1, 1, 1, 2])
+        cols[0].metric("EV / kill", f"{as_float(row.get('expected_value')):,.0f}z")
+        cols[1].metric("Map score", f"{as_float(row.get('map_value_score')):,.0f}")
+        cols[2].metric("Spawns", f"{as_int(row.get('best_map_count')):,}")
+        cols[3].markdown(f"**Map:** {row.get('best_map') or '-'}  \n**Profile:** {row.get('value_profile', 'Unknown')}  \n**Main value:** {row.get('top_drops') or row.get('drops_summary') or '-'}")
+        st.divider()
+    st.dataframe(clean_table(df), use_container_width=True, hide_index=True)
 
-    detail_df = drop_details_dataframe(drops, multiplier, use_overcharge, overcharge_rate, use_manual_prices, manual_prices)
-    if detail_df.empty:
-        st.info("No drops found for this monster.")
+
+def render_monster_details(df: pd.DataFrame, settings: Dict[str, Any], prices: Dict[str, Dict[str, Any]]) -> None:
+    st.subheader("Monster details")
+    if df.empty:
+        st.info("No monster is available under the current filters.")
         return
-
-    total_ev = detail_df["Adjusted EV"].sum()
-    capped_count = int((detail_df["Adjusted Chance"] >= 100.0).sum())
-    st.caption(
-        f"Drop multiplier x{multiplier:g}; Overcharge {'on' if use_overcharge else 'off'}; "
-        f"manual prices {'on' if use_manual_prices else 'off'}; "
-        f"each drop slot is capped at 100%. Total adjusted drop EV: {total_ev:,.2f}. "
-        f"Capped drops: {capped_count}."
-    )
-    st.dataframe(
-        detail_df,
-        use_container_width=True,
-        hide_index=True,
-        column_config={
-            "Base Chance": st.column_config.NumberColumn("Base Chance", format="%.2f%%"),
-            "Adjusted Chance": st.column_config.NumberColumn("Adjusted Chance", format="%.2f%%"),
-            "EV Share": st.column_config.NumberColumn("EV Share", format="%.2f%%"),
-            "Base Sell": st.column_config.NumberColumn("Base Sell", format="%d z"),
-            "Effective Sell": st.column_config.NumberColumn("Effective Sell", format="%d z"),
-            "Manual Price": st.column_config.NumberColumn("Manual Price", format="%d z"),
-            "Adjusted EV": st.column_config.NumberColumn("Adjusted EV", format="%.2f"),
-        },
-    )
+    opts = monster_options(df)
+    row = df.reset_index(drop=True).iloc[opts[st.selectbox("Choose a monster", list(opts.keys()))]]
+    cols = st.columns(6)
+    cols[0].metric("Monster ID", str(row.get("id", "")))
+    cols[1].metric("Level", str(row.get("level", "")))
+    cols[2].metric("Element", row.get("element_display") or "-")
+    cols[3].metric("Best map", row.get("best_map") or "-")
+    cols[4].metric("Spawns", f"{as_int(row.get('best_map_count')):,}")
+    cols[5].metric("EV / kill", f"{as_float(row.get('expected_value')):,.2f}")
+    st.markdown(f"**Income profile:** {row.get('value_profile', 'Unknown')}  \n**Main value drops:** {row.get('top_drops') or '-'}  \n**EV / 1k HP:** {as_float(row.get('ev_per_1k_hp')):,.2f}")
+    detail = drop_details_dataframe(parse_drops_json(row.get("drops_json", "")), settings["multiplier"], settings["use_overcharge"], settings["overcharge_rate"], settings["use_manual"], prices)
+    if detail.empty:
+        st.info(row.get("drops_summary") or "No drop details are available. Regenerate the CSV with drops_json if needed.")
+        return
+    capped = int((detail["Adjusted Chance"] >= 100.0).sum())
+    st.caption(f"Drop multiplier x{settings['multiplier']:g}; Overcharge {'on' if settings['use_overcharge'] else 'off'}; manual prices {'on' if settings['use_manual'] else 'off'}; capped drops: {capped}.")
+    st.dataframe(detail, use_container_width=True, hide_index=True)
+    with st.expander("Spawn summary"):
+        st.write(str(row.get("spawn_summary") or "No spawn summary available."))
 
 
-def select_monster_from_table(table_df: pd.DataFrame, detail_df: pd.DataFrame) -> pd.Series | None:
-    selected_position = None
-    try:
-        event = st.dataframe(
-            table_df,
-            use_container_width=True,
-            hide_index=True,
-            on_select="rerun",
-            selection_mode="single-row",
-        )
-        rows = getattr(getattr(event, "selection", None), "rows", [])
-        if rows:
-            selected_position = int(rows[0])
-    except TypeError:
-        st.dataframe(table_df, use_container_width=True, hide_index=True)
-        if not detail_df.empty and "name" in detail_df.columns:
-            labels = detail_df.apply(lambda row: f"{row.get('name', '')} — ID {row.get('id', '')}", axis=1).tolist()
-            chosen = st.selectbox(
-                "Inspect monster drops",
-                options=[""] + labels,
-                index=0,
-                help="Your Streamlit version does not support clicking dataframe rows, so use this fallback selector.",
-            )
-            if chosen:
-                selected_position = labels.index(chosen)
+def render_compare(df: pd.DataFrame) -> None:
+    st.subheader("Compare farms")
+    if df.empty:
+        st.info("No farms are available under the current filters.")
+        return
+    opts = monster_options(df)
+    selected = st.multiselect("Pick 2-5 monsters", list(opts.keys()), default=list(opts.keys())[: min(3, len(opts))], max_selections=5)
+    rows = [df.reset_index(drop=True).iloc[opts[label]] for label in selected]
+    compare = pd.DataFrame([
+        {"Monster": r.get("name"), "EV / kill": as_float(r.get("expected_value")), "Map score": as_float(r.get("map_value_score")), "EV / 1k HP": as_float(r.get("ev_per_1k_hp")), "Profile": r.get("value_profile"), "Top value share": as_float(r.get("top_value_share")), "Best map": r.get("best_map"), "Spawns": as_int(r.get("best_map_count")), "Level": as_int(r.get("level")), "HP": as_int(r.get("hp")), "Element": r.get("element_display"), "Main drops": r.get("top_drops")} for r in rows
+    ])
+    st.dataframe(compare, use_container_width=True, hide_index=True)
 
-    if selected_position is None or selected_position < 0 or selected_position >= len(detail_df):
-        return None
-    return detail_df.iloc[selected_position]
+
+def render_maps(df: pd.DataFrame) -> None:
+    st.subheader("Map view")
+    if df.empty or "best_map" not in df.columns:
+        st.info("No map data is available under the current filters.")
+        return
+    maps = df[df["best_map"].astype(str).str.strip() != ""].copy()
+    if maps.empty:
+        st.info("No parsed spawn locations are available.")
+        return
+    best_idx = maps.groupby("best_map")["map_value_score"].idxmax()
+    best = maps.loc[best_idx, ["best_map", "name", "map_value_score"]].rename(columns={"name": "Best monster", "map_value_score": "Best monster score"})
+    grouped = maps.groupby("best_map").agg(Monsters=("id", "count"), Total_spawns=("best_map_count", "sum"), Total_map_score=("map_value_score", "sum"), Average_EV=("expected_value", "mean"), Best_EV=("expected_value", "max")).reset_index().merge(best, on="best_map", how="left").sort_values("Total_map_score", ascending=False)
+    st.dataframe(grouped.rename(columns={"best_map": "Map"}), use_container_width=True, hide_index=True)
+
+
+def render_prices(raw_df: pd.DataFrame, selected_table: str, prices: Dict[str, Dict[str, Any]]) -> None:
+    st.subheader("Price tables")
+    st.caption("Current implementation is backend-free: guild/default tables are read-only files; personal and imported tables live in session unless exported.")
+    tables = get_price_tables()
+    st.dataframe(pd.DataFrame([{"Table": k, "Entries": len(v["prices"]), "Visibility": v["visibility"]} for k, v in tables.items()]), use_container_width=True, hide_index=True)
+    c1, c2 = st.columns(2)
+    if c1.button("Copy active table into personal session", disabled=selected_table == "NPC only", use_container_width=True):
+        st.session_state.personal_prices = dict(prices)
+        st.rerun()
+    c2.download_button("Export active table JSON", json.dumps(export_price_payload(prices, selected_table), ensure_ascii=False, indent=2), file_name=f"{selected_table.lower().replace(' ', '_')}.json", mime="application/json", use_container_width=True, disabled=selected_table == "NPC only")
+
+    st.divider()
+    st.subheader("Edit personal session")
+    catalog = extract_item_catalog(raw_df)
+    if catalog.empty:
+        st.info("No item catalog is available. Regenerate monster_ev.csv with drops_json.")
+    else:
+        def fmt(key: str) -> str:
+            row = catalog[catalog["key"] == key].iloc[0]
+            return f"{row['name']} ({key}) - NPC {as_int(row['base_sell_price']):,}z"
+        key = st.selectbox("Item", catalog["key"].tolist(), format_func=fmt)
+        row = catalog[catalog["key"] == key].iloc[0]
+        default = as_int(st.session_state.personal_prices.get(key, {}).get("price"), as_int(row["base_sell_price"]))
+        price = st.number_input("Manual player price", min_value=0, value=default, step=100)
+        b1, b2, b3 = st.columns(3)
+        if b1.button("Save to personal session", use_container_width=True):
+            st.session_state.personal_prices[key] = {"name": str(row["name"]), "price": int(price)}
+            st.rerun()
+        if b2.button("Remove selected", disabled=key not in st.session_state.personal_prices, use_container_width=True):
+            st.session_state.personal_prices.pop(key, None)
+            st.rerun()
+        if b3.button("Save to manual_prices.json", use_container_width=True):
+            Path(MANUAL_PRICE_PATH).write_text(json.dumps(export_price_payload(st.session_state.personal_prices, "Personal prices"), ensure_ascii=False, indent=2), encoding="utf-8")
+            st.success("Saved local manual_prices.json. Export JSON for durable use on Community Cloud.")
+        if st.session_state.personal_prices:
+            st.dataframe(pd.DataFrame([{"Item": v.get("name") or k, "AegisName": k, "Manual Price": as_int(v.get("price"))} for k, v in st.session_state.personal_prices.items()]), use_container_width=True, hide_index=True)
+
+    st.divider()
+    st.subheader("Import shared table")
+    upload = st.file_uploader("Upload JSON", type=["json"])
+    pasted = st.text_area("Or paste JSON", height=120)
+    if st.button("Import as session table"):
+        try:
+            raw_text = upload.getvalue().decode("utf-8") if upload is not None else pasted
+            raw = json.loads(raw_text)
+            imported = normalize_manual_prices(raw)
+            if imported:
+                st.session_state.imported_prices = imported
+                st.session_state.imported_table_name = str(raw.get("name") or "Imported/shared table") if isinstance(raw, dict) else "Imported/shared table"
+                st.rerun()
+            else:
+                st.warning("No prices found in that JSON.")
+        except Exception as exc:
+            st.error(f"Could not import price table: {exc}")
+
+
+def render_raw(df: pd.DataFrame) -> None:
+    st.subheader("Raw data")
+    st.download_button("Download filtered CSV", df.to_csv(index=False).encode("utf-8"), file_name="uaro_filtered_monsters.csv", mime="text/csv", disabled=df.empty)
+    st.dataframe(df.drop(columns=["drops_json"], errors="ignore"), use_container_width=True, hide_index=True)
 
 
 def main() -> None:
+    st.title("uaRO Farming Planner")
+    st.caption("Monster value explorer, farming comparison tool, and price-table sandbox for guild use.")
+    init_price_state()
     try:
-        df = load_data(CSV_PATH)
+        raw_df = load_data(CSV_PATH)
     except Exception as exc:
         st.error(str(exc))
         st.stop()
+    if raw_df.empty:
+        st.warning("`monster_ev.csv` is empty or missing usable rows. Run `python generate_monster_ev.py` with Hercules data, commit the generated CSV, and redeploy Streamlit.")
+        st.stop()
 
-    st.sidebar.header("Server Rates")
-    drop_rate_multiplier = st.sidebar.number_input(
-        "Drop rate multiplier",
-        min_value=0.0,
-        value=5.0,
-        step=0.5,
-        help="Applied live to each drop slot. Each adjusted drop chance is capped at 100% before EV is summed.",
-    )
-    use_overcharge = st.sidebar.checkbox(
-        "Apply merchant Overcharge (+24%)",
-        value=True,
-        help="When enabled, item sell values are multiplied by the Overcharge rate before EV is calculated. Manual player prices do not receive Overcharge.",
-    )
-    overcharge_rate = st.sidebar.number_input(
-        "Overcharge multiplier",
-        min_value=1.0,
-        value=1.24,
-        step=0.01,
-        format="%.2f",
-        disabled=not use_overcharge,
-    )
-    st.sidebar.caption("Adjusted drop chances are capped per item at 100%.")
+    settings, selected_table, prices = render_sidebar(raw_df)
+    df = apply_ui_ev_settings(raw_df, settings["multiplier"], settings["use_overcharge"], settings["overcharge_rate"], settings["use_manual"], prices)
+    filtered = filter_dataframe(df, settings)
+    render_metrics(filtered, selected_table, prices, settings)
 
-    use_manual_prices, manual_prices = render_manual_price_controls(df)
+    tabs = st.tabs(["Best farms", "Monster details", "Compare", "Maps", "Prices", "Raw data"])
+    with tabs[0]:
+        render_best_farms(filtered)
+    with tabs[1]:
+        render_monster_details(filtered, settings, prices)
+    with tabs[2]:
+        render_compare(filtered)
+    with tabs[3]:
+        render_maps(filtered)
+    with tabs[4]:
+        render_prices(raw_df, selected_table, prices)
+    with tabs[5]:
+        render_raw(filtered)
 
-    df = apply_ui_ev_settings(
-        df,
-        drop_rate_multiplier,
-        use_overcharge,
-        overcharge_rate,
-        use_manual_prices,
-        manual_prices,
-    )
-    if "ev_recalculated_in_ui" in df.columns and not bool(df["ev_recalculated_in_ui"].any()):
-        st.sidebar.warning("This CSV has no drops_json column, so EV cannot be recalculated live. Regenerate it with the updated RO1.py.")
-
-    st.sidebar.header("Search Parameters")
-    name_query = st.sidebar.text_input("Monster name contains", value="")
-    map_query = st.sidebar.text_input("Map contains", value="")
-
-    if "element" in df.columns:
-        element_pairs = df[["element", "element_display"]].dropna().drop_duplicates().sort_values(["element_display", "element"])
-        element_label_to_values: Dict[str, List[str]] = {}
-        for _, row in element_pairs.iterrows():
-            raw = str(row.get("element", "")).strip()
-            label = str(row.get("element_display", "")).strip() or raw
-            if raw:
-                element_label_to_values.setdefault(label, []).append(raw)
-        selected_elements = st.sidebar.multiselect(
-            "Element",
-            options=list(element_label_to_values.keys()),
-            default=[],
-            help="Leave blank to include all elements.",
-        )
-    else:
-        element_label_to_values = {}
-        selected_elements = []
-
-    level_min_available, level_max_available = safe_min_max(df["level"] if "level" in df.columns else pd.Series(dtype=int))
-    level_min, level_max = st.sidebar.slider(
-        "Level range",
-        level_min_available,
-        level_max_available,
-        (level_min_available, level_max_available),
-    )
-
-    spawn_min_available, spawn_max_available = safe_min_max(
-        df["best_map_count"] if "best_map_count" in df.columns else pd.Series(dtype=int)
-    )
-    spawn_default_min = max(1, spawn_min_available) if spawn_max_available >= 1 else spawn_min_available
-    spawn_min, spawn_max = st.sidebar.slider(
-        "Best-map spawn count range",
-        spawn_min_available,
-        spawn_max_available,
-        (spawn_default_min, spawn_max_available),
-    )
-
-    ev_threshold = st.sidebar.number_input(
-        "Minimum Expected Value",
-        min_value=0.0,
-        value=0.0,
-        step=1.0,
-        help="Uses the live adjusted EV after the drop-rate multiplier and 100% cap.",
-    )
-
-    include_boss = st.sidebar.checkbox("Include boss-flagged monsters", value=False) if "is_boss" in df.columns else True
-    include_mvp = st.sidebar.checkbox("Include monsters with MVP drops", value=False) if "has_mvp_drops" in df.columns else True
-
-    sort_candidates = [
-        col
-        for col in [
-            "expected_value",
-            "expected_value_base_rate",
-            "expected_value_raw",
-            "best_map_count",
-            "total_spawn_count",
-            "level",
-            "hp",
-            "name",
-        ]
-        if col in df.columns
-    ]
-    sort_by = st.sidebar.selectbox("Sort by", sort_candidates, index=0 if sort_candidates else None)
-    ascending = st.sidebar.checkbox("Ascending sort", value=False)
-
-    df_filtered = df.copy()
-
-    if selected_elements and "element" in df_filtered.columns:
-        allowed = {raw for label in selected_elements for raw in element_label_to_values.get(label, [])}
-        df_filtered = df_filtered[df_filtered["element"].isin(allowed)]
-    if "level" in df_filtered.columns:
-        df_filtered = df_filtered[(df_filtered["level"] >= level_min) & (df_filtered["level"] <= level_max)]
-    if "best_map_count" in df_filtered.columns:
-        df_filtered = df_filtered[(df_filtered["best_map_count"] >= spawn_min) & (df_filtered["best_map_count"] <= spawn_max)]
-    if "expected_value" in df_filtered.columns:
-        df_filtered = df_filtered[df_filtered["expected_value"] >= ev_threshold]
-    if name_query.strip() and "name" in df_filtered.columns:
-        q = name_query.strip().lower()
-        name_mask = df_filtered["name"].str.lower().str.contains(q, regex=False)
-        if "sprite_name" in df_filtered.columns:
-            name_mask = name_mask | df_filtered["sprite_name"].str.lower().str.contains(q, regex=False)
-        if "internal_name" in df_filtered.columns:
-            name_mask = name_mask | df_filtered["internal_name"].str.lower().str.contains(q, regex=False)
-        df_filtered = df_filtered[name_mask]
-    if map_query.strip() and "best_map" in df_filtered.columns:
-        q = map_query.strip().lower()
-        map_mask = df_filtered["best_map"].str.lower().str.contains(q, regex=False)
-        if "spawn_summary" in df_filtered.columns:
-            map_mask = map_mask | df_filtered["spawn_summary"].str.lower().str.contains(q, regex=False)
-        df_filtered = df_filtered[map_mask]
-    if not include_boss and "is_boss" in df_filtered.columns:
-        df_filtered = df_filtered[~df_filtered["is_boss"]]
-    if not include_mvp and "has_mvp_drops" in df_filtered.columns:
-        df_filtered = df_filtered[~df_filtered["has_mvp_drops"]]
-
-    if sort_by:
-        df_filtered = df_filtered.sort_values(sort_by, ascending=ascending, kind="stable")
-
-    total_matches = len(df_filtered)
-    median_ev = df_filtered["expected_value"].median() if total_matches and "expected_value" in df_filtered.columns else 0.0
-    max_ev = df_filtered["expected_value"].max() if total_matches and "expected_value" in df_filtered.columns else 0.0
-
-    metric_cols = st.columns(6)
-    metric_cols[0].metric("Matching monsters", f"{total_matches:,}")
-    metric_cols[1].metric("Max adjusted EV", f"{max_ev:,.2f}")
-    metric_cols[2].metric("Median adjusted EV", f"{median_ev:,.2f}")
-    metric_cols[3].metric("Drop multiplier", f"x{drop_rate_multiplier:g}")
-    metric_cols[4].metric("Overcharge", "on" if use_overcharge else "off")
-    metric_cols[5].metric("Manual prices", "on" if use_manual_prices else "off", f"{len(manual_prices)} saved")
-
-    preferred_cols = [
-        "name",
-        "expected_value",
-        "level",
-        "hp",
-        "element_display",
-        "best_map_count",
-        "best_map",
-        "id",
-        "sprite_name",
-        "internal_name",
-        "race",
-        "size",
-        "element",
-        "element_level",
-        "is_boss",
-        "map_count",
-        "total_spawn_count",
-        "drop_count",
-        "mvp_drop_count",
-        "missing_item_count",
-        "expected_value_base_rate",
-        "expected_value_raw",
-        "adjusted_drops_summary",
-        "drops_summary",
-        "spawn_summary",
-    ]
-    visible_cols = [col for col in preferred_cols if col in df_filtered.columns]
-    remaining_cols = [col for col in df_filtered.columns if col not in visible_cols and col != "drops_json"]
-
-    st.subheader("Matching Monsters")
-    st.caption("Click a monster row to inspect its drops below the main table." if total_matches else "No monsters match the current filters.")
-
-    detail_df = df_filtered.reset_index(drop=True)
-    table_df = detail_df[visible_cols + remaining_cols]
-    selected_row = select_monster_from_table(table_df, detail_df)
-
-    if selected_row is not None:
-        render_selected_monster_drops(
-            selected_row,
-            drop_rate_multiplier,
-            use_overcharge,
-            overcharge_rate,
-            use_manual_prices,
-            manual_prices,
-        )
-    elif total_matches:
-        st.info("Select a monster row above to show its drops here.")
-
-    with st.expander("Notes"):
-        st.markdown(
-            f"""
-- `expected_value` is recalculated in the UI from `drops_json` using the current drop multiplier: **x{drop_rate_multiplier:g}**.
-- Each individual drop slot is capped at **100%** before EV is summed. Example: a 30% drop at x5 becomes 100%, not 150%.
-- Merchant Overcharge is enabled by default. When enabled, NPC sell prices are multiplied by the configured Overcharge rate, default **1.24**.
-- Manual player-trade prices are stored in `manual_prices.json` by default. When enabled, they override NPC prices and do **not** receive Overcharge.
+    with st.expander("How the numbers are interpreted"):
+        st.markdown(f"""
+- `EV / kill` is recalculated from `drops_json` using the current drop multiplier: **x{settings['multiplier']:g}**.
+- Each drop slot is capped at **100%** before EV is summed.
+- Manual player prices override NPC prices and do **not** receive Overcharge.
+- `Map score` is `EV / kill * best-map spawn count`; it is a simple density proxy, not zeny/hour.
+- `Income profile` estimates whether value is stable, swingy, or lottery-like based on top-drop concentration.
 - Boss-flagged monsters and monsters with MVP drops are hidden by default.
-- The best-map spawn count filter defaults to at least 1 to hide monsters with no parsed spawn location.
-- `expected_value_base_rate` / `expected_value_raw` are the baseline x1 values generated from Hercules data.
-- `best_map_count` is aggregated from permanent spawn files, not from an HTML database.
-- Server-specific uaRO customizations are included only if those customized files were used before generating `monster_ev.csv`.
-            """.strip()
-        )
+        """.strip())
 
 
 if __name__ == "__main__":
