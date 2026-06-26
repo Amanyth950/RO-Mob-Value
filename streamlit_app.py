@@ -1,4 +1,4 @@
-from RO2 import main
+from RO2_perf import main
 
 
 if __name__ == "__main__":
