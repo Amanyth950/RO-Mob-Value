@@ -108,6 +108,10 @@ def as_float(value: Any, default: float = 0.0) -> float:
     try:
         if value is None or value == "":
             return default
+        if isinstance(value, str):
+            value = value.strip().replace("%", "").replace(",", "")
+            if not value:
+                return default
         return float(value)
     except (TypeError, ValueError):
         return default
@@ -152,6 +156,12 @@ def rounded_table(df: pd.DataFrame, columns: Iterable[str]) -> pd.DataFrame:
         if col in out.columns:
             out[col] = pd.to_numeric(out[col], errors="coerce").round().astype("Int64")
     return out
+
+
+def format_percent(value: Any) -> str:
+    number = as_float(value, 0.0)
+    text = f"{number:.2f}".rstrip("0").rstrip(".")
+    return f"{text}%"
 
 
 @st.cache_data
@@ -363,7 +373,10 @@ def drop_details_dataframe(drops: Iterable[Dict[str, Any]], multiplier: float, u
     detail["EV Share"] = detail["Expected Value"] / total * 100.0 if total > 0 else 0.0
     preferred = ["Item", "Expected Value", "EV Share", "Adjusted Chance", "Effective Sell", "Price Source", "Base Chance", "Base Sell", "Manual Price", "Type", "AegisName", "Missing Item"]
     detail = detail[preferred].sort_values("Expected Value", ascending=False, kind="stable").reset_index(drop=True)
-    return rounded_table(detail, ["Expected Value", "EV Share", "Adjusted Chance", "Base Chance"])
+    detail = rounded_table(detail, ["Expected Value"])
+    for percent_col in ["EV Share", "Adjusted Chance", "Base Chance"]:
+        detail[percent_col] = detail[percent_col].apply(format_percent)
+    return detail
 
 
 def summarize_drops(detail: pd.DataFrame, limit: int = 3) -> str:
@@ -532,7 +545,7 @@ def render_selected_monster_drops(row: pd.Series, settings: Dict[str, Any], pric
     if detail.empty:
         st.info(row.get("drops_summary") or "No drop details are available. Regenerate the CSV with drops_json if needed.")
         return
-    capped = int((detail["Adjusted Chance"] >= 100).sum())
+    capped = int(detail["Adjusted Chance"].apply(lambda value: as_float(value) >= 100).sum())
     st.caption(f"Main value: {summarize_drops(detail, 5) or '-'} | capped drops: {capped}")
     st.dataframe(detail, use_container_width=True, hide_index=True)
     with st.expander("Spawn summary"):
