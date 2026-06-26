@@ -1,5 +1,9 @@
 # UARO Mob Value
 
+[![Open in Streamlit](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://uaro-zenymob.streamlit.app/)
+
+Live app: https://uaro-zenymob.streamlit.app/
+
 Streamlit app for exploring Ragnarok Online monster zeny value from Hercules pre-renewal monster, item, and spawn data.
 
 ## Run Locally
