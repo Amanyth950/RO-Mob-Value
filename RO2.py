@@ -10,7 +10,7 @@ MANUAL_PRICE_PATH = "manual_prices.json"
 MANUAL_PRICE_EXAMPLE_PATH = "manual_prices.example.json"
 ELEMENT_PREFIXES = ("Ele_", "ELE_", "Element_", "ELEMENT_")
 
-st.set_page_config(page_title="uaRO Farming Planner", layout="wide")
+st.set_page_config(page_title="Mob Value Planner", layout="wide")
 
 
 def as_float(value: Any, default: float = 0.0) -> float:
@@ -164,7 +164,7 @@ def export_price_payload(prices: Dict[str, Dict[str, Any]], name: str) -> Dict[s
     for key, value in sorted(prices.items(), key=lambda item: str(item[1].get("name") or item[0]).lower()):
         price = as_float(value.get("price"), 0.0)
         clean[str(key)] = {"name": str(value.get("name") or key), "price": int(price) if price.is_integer() else price}
-    return {"name": name, "format": "uaro-mob-value.price-table.v1", "prices": clean}
+    return {"name": name, "format": "mob-value-planner.price-table.v1", "prices": clean}
 
 
 def price_editor_dataframe(prices: Dict[str, Dict[str, Any]]) -> pd.DataFrame:
@@ -639,13 +639,13 @@ def render_prices(raw_df: pd.DataFrame, selected_table: str, prices: Dict[str, D
 
 def render_raw(df: pd.DataFrame) -> None:
     st.subheader("Raw data")
-    st.download_button("Download filtered CSV", df.to_csv(index=False).encode("utf-8"), file_name="uaro_filtered_monsters.csv", mime="text/csv", disabled=df.empty)
+    st.download_button("Download filtered CSV", df.to_csv(index=False).encode("utf-8"), file_name="mob_value_filtered_monsters.csv", mime="text/csv", disabled=df.empty)
     st.dataframe(df.drop(columns=["drops_json"], errors="ignore"), use_container_width=True, hide_index=True)
 
 
 def main() -> None:
-    st.title("uaRO Farming Planner")
-    st.caption("Monster value explorer, farming comparison tool, and price-table sandbox for guild use.")
+    st.title("Mob Value Planner")
+    st.caption("Monster value explorer, farming comparison tool, and price-table sandbox.")
     init_price_state()
     try:
         raw_df = load_data(CSV_PATH)
