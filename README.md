@@ -1,10 +1,12 @@
-# UARO Mob Value
+# Mob Value Planner
 
-[![Open in Streamlit](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://uaro-zenymob.streamlit.app/)
+[![Open in Streamlit](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://ro-zenymob.streamlit.app/)
 
-Live app: https://uaro-zenymob.streamlit.app/
+Live app: https://ro-zenymob.streamlit.app/
 
-Streamlit farming planner for exploring Ragnarok Online monster zeny value from Hercules pre-renewal monster, item, and spawn data.
+Unofficial fan-made utility for exploring pre-renewal RO monster zeny value from monster, item, and spawn data.
+
+This project is not affiliated with any server, publisher, game operator, or emulator project.
 
 The app is organized around searchable farming tables rather than raw database browsing:
 
@@ -28,7 +30,7 @@ Run the app:
 python -m streamlit run streamlit_app.py
 ```
 
-`streamlit_app.py` calls `RO2.main()` and reads `monster_ev.csv` by default. The CSV committed to this repo is generated from local Hercules-derived data.
+`streamlit_app.py` calls `RO2.main()` and reads `monster_ev.csv` by default. The CSV committed to this repo is generated from local source data.
 
 ## Regenerate Monster Data
 
@@ -50,7 +52,7 @@ Regenerate outputs:
 python generate_monster_ev.py
 ```
 
-The full Hercules emulator clone is not required for deployment and should not be committed. Only the app files and generated `monster_ev.csv` are needed by Streamlit Community Cloud.
+Only the app files and generated `monster_ev.csv` are needed by Streamlit Community Cloud. Do not commit full upstream emulator/database clones.
 
 ## Price Tables
 
@@ -75,7 +77,7 @@ Exported/imported price tables use this wrapper format:
 ```json
 {
   "name": "Example prices",
-  "format": "uaro-mob-value.price-table.v1",
+  "format": "mob-value-planner.price-table.v1",
   "prices": {
     "Elunium": {
       "name": "Elunium",
@@ -89,7 +91,7 @@ The legacy flat format from `manual_prices.example.json` and `manual_prices.json
 
 ## Expected Value Calculation
 
-`generate_monster_ev.py` parses Hercules item and monster databases, then joins each monster drop slot with the item's NPC sell value. Hercules drop rates use `10000 = 100%`.
+`generate_monster_ev.py` parses item and monster databases, then joins each monster drop slot with the item's NPC sell value. Drop rates use `10000 = 100%`.
 
 For each monster:
 
