@@ -4,7 +4,16 @@
 
 Live app: https://uaro-zenymob.streamlit.app/
 
-Streamlit app for exploring Ragnarok Online monster zeny value from Hercules pre-renewal monster, item, and spawn data.
+Streamlit farming planner for exploring Ragnarok Online monster zeny value from Hercules pre-renewal monster, item, and spawn data.
+
+The app is now organized around farming decisions rather than raw database browsing:
+
+- **Best farms** ranks monsters by EV, map density proxy, top-value drops, and income profile.
+- **Monster details** shows per-monster EV assumptions, drop contribution, price source, spawn summary, and capped-drop context.
+- **Compare** lets players compare multiple farms side by side.
+- **Maps** groups options by best parsed spawn map.
+- **Prices** supports NPC-only, guild/default, personal session, and imported/shared price tables.
+- **Raw data** keeps the old spreadsheet-style escape hatch.
 
 ## Run Locally
 
@@ -20,11 +29,11 @@ Run the app:
 python -m streamlit run streamlit_app.py
 ```
 
-`streamlit_app.py` reads `monster_ev.csv` by default. The CSV committed to this repo is generated from the current local Hercules-derived data.
+`streamlit_app.py` calls `RO2.main()` and reads `monster_ev.csv` by default. The CSV committed to this repo is generated from local Hercules-derived data.
 
 ## Regenerate Monster Data
 
-`generate_monster_ev.py` is included as the regeneration script. It expects local source data in this layout:
+`generate_monster_ev.py` calls `RO1.main()` and expects local source data in this layout:
 
 ```text
 data/
@@ -44,11 +53,33 @@ python generate_monster_ev.py
 
 The full Hercules emulator clone is not required for deployment and should not be committed. Only the app files and generated `monster_ev.csv` are needed by Streamlit Community Cloud.
 
-## Streamlit Community Cloud
+## Price Tables
 
-Use `streamlit_app.py` as the app entrypoint. Streamlit will install packages from `requirements.txt` and load the committed `monster_ev.csv`.
+The app supports several price-table modes without requiring a database yet:
 
-Optional market price overrides can be copied from `manual_prices.example.json` to `manual_prices.json` for local use. `manual_prices.json` is ignored so local market edits are not committed accidentally.
+- **NPC only**: uses item NPC sell values.
+- **Guild/default table**: read from `guild_prices.json` when present, then `guild_prices.example.json`, then `manual_prices.example.json`.
+- **Personal session**: editable in the UI for the current browser session.
+- **Imported/shared table**: upload or paste exported JSON from another player.
+
+For a curated guild table, copy `guild_prices.example.json` to `guild_prices.json`, edit prices, and commit it. For personal/local testing, use `manual_prices.json`; it is ignored by git so local market edits are not committed accidentally.
+
+Exported/imported price tables use this wrapper format:
+
+```json
+{
+  "name": "Example prices",
+  "format": "uaro-mob-value.price-table.v1",
+  "prices": {
+    "Elunium": {
+      "name": "Elunium",
+      "price": 6000
+    }
+  }
+}
+```
+
+The legacy flat format from `manual_prices.example.json` is still accepted.
 
 ## Expected Value Calculation
 
@@ -61,10 +92,20 @@ drop_value = item_sell_price * (drop_chance / 10000)
 monster_ev = sum(drop_value for all drop slots)
 ```
 
-The generated CSV stores baseline EV values and a `drops_json` column with the raw drop details. In the Streamlit UI, `streamlit_app.py` recalculates EV live when you change the drop-rate multiplier. Each adjusted drop slot is capped at 100% before it contributes to EV.
+The generated CSV stores baseline EV values and a `drops_json` column with the raw drop details. In the Streamlit UI, `RO2.py` recalculates EV live when you change the drop-rate multiplier, Overcharge setting, or selected price table. Each adjusted drop slot is capped at 100% before it contributes to EV.
 
-Merchant Overcharge applies only to NPC sell values. Manual market prices, when enabled in the app, override NPC prices and are not multiplied by Overcharge.
+Merchant Overcharge applies only to NPC sell values. Manual market prices override NPC prices and are not multiplied by Overcharge.
+
+`Map score` is a simple density proxy: `EV / kill * best-map spawn count`. It is not a true zeny-per-hour estimate.
+
+`Income profile` estimates whether a monster is stable, swingy, or lottery-like based on how concentrated its EV is in the top drop.
+
+## Streamlit Community Cloud
+
+Use `streamlit_app.py` as the app entrypoint. Streamlit installs packages from `requirements.txt` and loads the committed `monster_ev.csv`.
+
+The current price-table implementation is intentionally backend-free. Personal edits are session-local unless exported or saved to a local JSON file. A future multi-user version should add authentication and persistent storage for named public/private price tables.
 
 ## Legacy Entrypoints
 
-`RO1.py` and `RO2.py` are kept as compatibility entrypoints for now. New setup instructions should use `generate_monster_ev.py` and `streamlit_app.py`.
+`RO1.py` and `RO2.py` remain the functional modules. `generate_monster_ev.py` and `streamlit_app.py` are the preferred public entrypoints.
