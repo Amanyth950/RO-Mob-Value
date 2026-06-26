@@ -7,8 +7,6 @@ import streamlit as st
 
 CSV_PATH = "monster_ev.csv"
 MANUAL_PRICE_PATH = "manual_prices.json"
-GUILD_PRICE_PATH = "guild_prices.json"
-GUILD_PRICE_EXAMPLE_PATH = "guild_prices.example.json"
 MANUAL_PRICE_EXAMPLE_PATH = "manual_prices.example.json"
 ELEMENT_PREFIXES = ("Ele_", "ELE_", "Element_", "ELEMENT_")
 
@@ -169,34 +167,44 @@ def export_price_payload(prices: Dict[str, Dict[str, Any]], name: str) -> Dict[s
     return {"name": name, "format": "uaro-mob-value.price-table.v1", "prices": clean}
 
 
+def price_editor_dataframe(prices: Dict[str, Dict[str, Any]]) -> pd.DataFrame:
+    rows = [
+        {
+            "AegisName": key,
+            "Item": str(value.get("name") or key),
+            "Manual Price": as_int(value.get("price"), 0),
+        }
+        for key, value in sorted(prices.items(), key=lambda item: str(item[1].get("name") or item[0]).lower())
+    ]
+    return pd.DataFrame(rows, columns=["AegisName", "Item", "Manual Price"])
+
+
+def prices_from_editor_dataframe(df: pd.DataFrame) -> Dict[str, Dict[str, Any]]:
+    prices: Dict[str, Dict[str, Any]] = {}
+    if df is None or df.empty:
+        return prices
+    for _, row in df.iterrows():
+        key = str(row.get("AegisName") or "").strip()
+        if not key:
+            continue
+        price = as_float(row.get("Manual Price"), -1.0)
+        if price < 0:
+            continue
+        name = str(row.get("Item") or key).strip() or key
+        prices[key] = {"name": name, "price": float(price)}
+    return prices
+
+
 def init_price_state() -> None:
     if "personal_prices" not in st.session_state:
         st.session_state.personal_prices = load_price_file(MANUAL_PRICE_PATH)
-    if "imported_prices" not in st.session_state:
-        st.session_state.imported_prices = {}
-    if "imported_table_name" not in st.session_state:
-        st.session_state.imported_table_name = "Imported/shared table"
-
-
-def load_guild_prices() -> Tuple[str, Dict[str, Dict[str, Any]]]:
-    for label, path in [
-        ("Guild default", GUILD_PRICE_PATH),
-        ("Example guild table", GUILD_PRICE_EXAMPLE_PATH),
-        ("Example price table", MANUAL_PRICE_EXAMPLE_PATH),
-    ]:
-        prices = load_price_file(path)
-        if prices:
-            return label, prices
-    return "Guild default", {}
 
 
 def get_price_tables() -> Dict[str, Dict[str, Any]]:
-    guild_label, guild_prices = load_guild_prices()
     return {
         "NPC only": {"prices": {}, "visibility": "built-in"},
-        guild_label: {"prices": guild_prices, "visibility": "read-only"},
-        "Personal session": {"prices": st.session_state.personal_prices, "visibility": "private/session"},
-        st.session_state.imported_table_name: {"prices": st.session_state.imported_prices, "visibility": "imported/session"},
+        "Example table": {"prices": load_price_file(MANUAL_PRICE_EXAMPLE_PATH), "visibility": "read-only"},
+        "Personal table": {"prices": st.session_state.personal_prices, "visibility": "editable/session"},
     }
 
 
@@ -549,58 +557,92 @@ def render_maps(df: pd.DataFrame) -> None:
 
 def render_prices(raw_df: pd.DataFrame, selected_table: str, prices: Dict[str, Dict[str, Any]]) -> None:
     st.subheader("Price tables")
-    st.caption("Current implementation is backend-free: guild/default tables are read-only files; personal and imported tables live in session unless exported.")
     tables = get_price_tables()
-    st.dataframe(pd.DataFrame([{"Table": k, "Entries": len(v["prices"]), "Visibility": v["visibility"]} for k, v in tables.items()]), use_container_width=True, hide_index=True)
-    c1, c2 = st.columns(2)
-    if c1.button("Copy active table into personal session", disabled=selected_table == "NPC only", use_container_width=True):
-        st.session_state.personal_prices = dict(prices)
+    st.dataframe(
+        pd.DataFrame(
+            [
+                {"Table": name, "Entries": len(info["prices"]), "Visibility": info["visibility"]}
+                for name, info in tables.items()
+            ]
+        ),
+        use_container_width=True,
+        hide_index=True,
+    )
+
+    st.divider()
+    st.subheader("Personal table")
+    st.caption("Edit overrides directly in the table. Export/import also operates on this same Personal table.")
+
+    personal_df = price_editor_dataframe(st.session_state.personal_prices)
+    edited_df = st.data_editor(
+        personal_df,
+        use_container_width=True,
+        hide_index=True,
+        num_rows="dynamic",
+        key="personal_price_editor",
+        column_config={
+            "AegisName": st.column_config.TextColumn("AegisName", help="Internal item key used in drops_json."),
+            "Item": st.column_config.TextColumn("Item", help="Display name for readability."),
+            "Manual Price": st.column_config.NumberColumn("Manual Price", min_value=0, step=100, format="%d z"),
+        },
+    )
+
+    b1, b2, b3 = st.columns(3)
+    if b1.button("Apply table edits", use_container_width=True):
+        st.session_state.personal_prices = prices_from_editor_dataframe(edited_df)
         st.rerun()
-    c2.download_button("Export active table JSON", json.dumps(export_price_payload(prices, selected_table), ensure_ascii=False, indent=2), file_name=f"{selected_table.lower().replace(' ', '_')}.json", mime="application/json", use_container_width=True, disabled=selected_table == "NPC only")
+    if b2.button("Clear personal table", disabled=not bool(st.session_state.personal_prices), use_container_width=True):
+        st.session_state.personal_prices = {}
+        st.rerun()
+    b3.download_button(
+        "Export personal JSON",
+        json.dumps(export_price_payload(st.session_state.personal_prices, "Personal prices"), ensure_ascii=False, indent=2),
+        file_name="manual_prices.json",
+        mime="application/json",
+        use_container_width=True,
+        disabled=not bool(st.session_state.personal_prices),
+    )
 
-    st.divider()
-    st.subheader("Edit personal session")
-    catalog = extract_item_catalog(raw_df)
-    if catalog.empty:
-        st.info("No item catalog is available. Regenerate monster_ev.csv with drops_json.")
-    else:
-        def fmt(key: str) -> str:
+    with st.expander("Add item from catalog"):
+        catalog = extract_item_catalog(raw_df)
+        if catalog.empty:
+            st.info("No item catalog is available. Regenerate monster_ev.csv with drops_json.")
+        else:
+            def fmt(key: str) -> str:
+                row = catalog[catalog["key"] == key].iloc[0]
+                return f"{row['name']} ({key}) - NPC {as_int(row['base_sell_price']):,}z"
+            key = st.selectbox("Item", catalog["key"].tolist(), format_func=fmt)
             row = catalog[catalog["key"] == key].iloc[0]
-            return f"{row['name']} ({key}) - NPC {as_int(row['base_sell_price']):,}z"
-        key = st.selectbox("Item", catalog["key"].tolist(), format_func=fmt)
-        row = catalog[catalog["key"] == key].iloc[0]
-        default = as_int(st.session_state.personal_prices.get(key, {}).get("price"), as_int(row["base_sell_price"]))
-        price = st.number_input("Manual player price", min_value=0, value=default, step=100)
-        b1, b2, b3 = st.columns(3)
-        if b1.button("Save to personal session", use_container_width=True):
-            st.session_state.personal_prices[key] = {"name": str(row["name"]), "price": int(price)}
-            st.rerun()
-        if b2.button("Remove selected", disabled=key not in st.session_state.personal_prices, use_container_width=True):
-            st.session_state.personal_prices.pop(key, None)
-            st.rerun()
-        if b3.button("Save to manual_prices.json", use_container_width=True):
-            Path(MANUAL_PRICE_PATH).write_text(json.dumps(export_price_payload(st.session_state.personal_prices, "Personal prices"), ensure_ascii=False, indent=2), encoding="utf-8")
-            st.success("Saved local manual_prices.json. Export JSON for durable use on Community Cloud.")
-        if st.session_state.personal_prices:
-            st.dataframe(pd.DataFrame([{"Item": v.get("name") or k, "AegisName": k, "Manual Price": as_int(v.get("price"))} for k, v in st.session_state.personal_prices.items()]), use_container_width=True, hide_index=True)
+            default = as_int(st.session_state.personal_prices.get(key, {}).get("price"), as_int(row["base_sell_price"]))
+            price = st.number_input("Manual player price", min_value=0, value=default, step=100)
+            if st.button("Add / update selected item", use_container_width=True):
+                st.session_state.personal_prices[key] = {"name": str(row["name"]), "price": int(price)}
+                st.rerun()
 
     st.divider()
-    st.subheader("Import shared table")
-    upload = st.file_uploader("Upload JSON", type=["json"])
+    st.subheader("Import into Personal table")
+    upload = st.file_uploader("Upload manual price JSON", type=["json"])
     pasted = st.text_area("Or paste JSON", height=120)
-    if st.button("Import as session table"):
+    replace_existing = st.checkbox("Replace current personal table", value=True)
+    if st.button("Import", use_container_width=True):
         try:
             raw_text = upload.getvalue().decode("utf-8") if upload is not None else pasted
             raw = json.loads(raw_text)
             imported = normalize_manual_prices(raw)
             if imported:
-                st.session_state.imported_prices = imported
-                st.session_state.imported_table_name = str(raw.get("name") or "Imported/shared table") if isinstance(raw, dict) else "Imported/shared table"
+                if replace_existing:
+                    st.session_state.personal_prices = imported
+                else:
+                    st.session_state.personal_prices = {**st.session_state.personal_prices, **imported}
+                st.success(f"Imported {len(imported):,} price override(s) into Personal table.")
                 st.rerun()
             else:
                 st.warning("No prices found in that JSON.")
         except Exception as exc:
             st.error(f"Could not import price table: {exc}")
+
+    if selected_table == "Personal table":
+        st.info(f"The active price table is Personal table with {len(st.session_state.personal_prices):,} override(s).")
 
 
 def render_raw(df: pd.DataFrame) -> None:
