@@ -17,6 +17,59 @@ SORT_LABELS = {
     "hp": "HP",
     "name": "Monster name",
 }
+HELP_TEXT = {
+    "best_farms": """
+Use this tab as the main mob search table.
+
+- **Expected Value** is the average zeny value of one kill after the current drop multiplier, Overcharge setting, and selected price table are applied.
+- **Map score** is `Expected Value * Best-map spawns`. It is a density proxy, not a true zeny-per-hour estimate.
+- **Main value drops** shows the drops contributing most of the mob's value. The percentage is that drop's share of the mob's total expected value.
+- **Best map** and **Best-map spawns** come from parsed spawn data. A mob can appear on other maps too.
+- Boss-flagged monsters and monsters with MVP drops are hidden by default in the sidebar.
+
+Select a row to open the drop breakdown underneath the table.
+    """,
+    "compare": """
+Use this tab to compare a small shortlist of mobs side by side.
+
+- Pick 2 to 5 mobs from the selector.
+- **Expected Value** compares average loot value per kill.
+- **Map score** adds the best-map spawn count to the expected value, which can help identify denser farming options.
+- **Top value share** shows how concentrated the value is in the single highest-value drop. A high number means the mob's value depends more on one item.
+- **Main drops** is a quick reminder of what you are mainly farming for.
+    """,
+    "maps": """
+Use this tab when you want to start from a location instead of a specific mob.
+
+- The top table groups all matching mobs by map.
+- **Total spawns** is the sum of parsed spawn counts for matching mobs on that map.
+- **Total map score** is the sum of each mob's `Expected Value * spawn count` on that map.
+- **Average EV** and **Best EV** summarize the expected values of mobs found there.
+- **Highest-score mob** is the mob contributing the highest individual map score on that map.
+
+Select a map row to open the list of mobs that spawn there.
+    """,
+    "prices": """
+Use this tab to control market-price assumptions.
+
+- **NPC only** ignores manual prices and uses NPC sell values.
+- **Example table** is the read-only default price list shipped with the app.
+- **Personal table** is your editable session-local table.
+- Manual prices override NPC values and are not multiplied by Overcharge.
+- Use **Export personal JSON** to save your Personal table as a file.
+- Use **Import** to load a saved or shared price file into your Personal table.
+
+After editing prices in the table, press **Apply table edits**.
+    """,
+    "raw": """
+Use this tab as the escape hatch for inspecting the generated dataset.
+
+- It shows the filtered rows after sidebar filters and current price assumptions are applied.
+- The generated `drops_json` column is hidden here because it is large and mainly used internally for recalculation.
+- Use **Download filtered CSV** if you want to inspect the current filtered result elsewhere.
+- For data problems, regenerate `monster_ev.csv` from the source monster, item, and spawn data.
+    """,
+}
 
 st.set_page_config(page_title="Mob Value Planner", layout="wide")
 
@@ -50,6 +103,14 @@ def apply_layout_css() -> None:
         """.strip(),
         unsafe_allow_html=True,
     )
+
+
+def render_tab_help(tab_key: str) -> None:
+    text = HELP_TEXT.get(tab_key, "").strip()
+    if not text:
+        return
+    with st.expander("Help / explanations", expanded=False):
+        st.markdown(text)
 
 
 def as_float(value: Any, default: float = 0.0) -> float:
@@ -493,6 +554,7 @@ def render_selected_monster_drops(row: pd.Series, settings: Dict[str, Any], pric
 
 def render_best_farms(df: pd.DataFrame, settings: Dict[str, Any], prices: Dict[str, Dict[str, Any]]) -> None:
     st.subheader("Mobs")
+    render_tab_help("best_farms")
     st.caption("Filtered and sorted mob table. Select a row to inspect its drop value breakdown below.")
     if df.empty:
         st.info("No monsters match the current filters.")
@@ -507,6 +569,7 @@ def render_best_farms(df: pd.DataFrame, settings: Dict[str, Any], prices: Dict[s
 
 def render_compare(df: pd.DataFrame) -> None:
     st.subheader("Compare farms")
+    render_tab_help("compare")
     if df.empty:
         st.info("No farms are available under the current filters.")
         return
@@ -547,6 +610,7 @@ def build_map_monster_rows(df: pd.DataFrame) -> pd.DataFrame:
 
 def render_maps(df: pd.DataFrame) -> None:
     st.subheader("Maps")
+    render_tab_help("maps")
     if df.empty:
         st.info("No map data is available under the current filters.")
         return
@@ -583,6 +647,7 @@ def render_maps(df: pd.DataFrame) -> None:
 
 def render_prices(raw_df: pd.DataFrame, selected_table: str, prices: Dict[str, Dict[str, Any]]) -> None:
     st.subheader("Price tables")
+    render_tab_help("prices")
     tables = get_price_tables()
     st.dataframe(pd.DataFrame([{"Table": name, "Entries": len(info["prices"]), "Visibility": info["visibility"]} for name, info in tables.items()]), use_container_width=True, hide_index=True)
 
@@ -653,6 +718,7 @@ def render_prices(raw_df: pd.DataFrame, selected_table: str, prices: Dict[str, D
 
 def render_raw(df: pd.DataFrame) -> None:
     st.subheader("Raw data")
+    render_tab_help("raw")
     st.download_button("Download filtered CSV", df.to_csv(index=False).encode("utf-8"), file_name="mob_value_filtered_monsters.csv", mime="text/csv", disabled=df.empty)
     st.dataframe(df.drop(columns=["drops_json"], errors="ignore"), use_container_width=True, hide_index=True)
 
