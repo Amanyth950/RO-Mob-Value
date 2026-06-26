@@ -29,15 +29,6 @@ Use this tab as the main mob search table.
 
 Select a row to open the drop breakdown underneath the table.
     """,
-    "compare": """
-Use this tab to compare a small shortlist of mobs side by side.
-
-- Pick 2 to 5 mobs from the selector.
-- **Expected Value** compares average loot value per kill.
-- **Map score** adds the best-map spawn count to the expected value, which can help identify denser farming options.
-- **Top value share** shows how concentrated the value is in the single highest-value drop. A high number means the mob's value depends more on one item.
-- **Main drops** is a quick reminder of what you are mainly farming for.
-    """,
     "maps": """
 Use this tab when you want to start from a location instead of a specific mob.
 
@@ -395,12 +386,16 @@ def recalc_monster(row: pd.Series, multiplier: float, use_overcharge: bool, over
 
 def apply_ui_ev_settings(df: pd.DataFrame, multiplier: float, use_overcharge: bool, overcharge_rate: float, use_manual: bool, prices: Dict[str, Dict[str, Any]]) -> pd.DataFrame:
     df = df.copy()
-    if df.empty or "drops_json" not in df.columns:
+    if df.empty:
         return df
-    derived = df.apply(lambda row: recalc_monster(row, multiplier, use_overcharge, overcharge_rate, use_manual, prices), axis=1)
-    df["expected_value"] = derived.apply(lambda d: d["expected_value"])
-    df["top_drops"] = derived.apply(lambda d: d["top_drops"])
-    df["top_value_share"] = derived.apply(lambda d: d["top_value_share"])
+    if "drops_json" in df.columns:
+        derived = df.apply(lambda row: recalc_monster(row, multiplier, use_overcharge, overcharge_rate, use_manual, prices), axis=1)
+        df["expected_value"] = derived.apply(lambda d: d["expected_value"])
+        df["top_drops"] = derived.apply(lambda d: d["top_drops"])
+        df["top_value_share"] = derived.apply(lambda d: d["top_value_share"])
+    else:
+        df["top_drops"] = df.get("drops_summary", "")
+        df["top_value_share"] = 0.0
     df["map_value_score"] = numeric_series(df, "expected_value") * numeric_series(df, "best_map_count")
     return df
 
@@ -495,14 +490,6 @@ def clean_table(df: pd.DataFrame) -> pd.DataFrame:
     return rounded_table(table, ["Expected Value", "Map score"])
 
 
-def monster_options(df: pd.DataFrame) -> Dict[str, int]:
-    opts = {}
-    for idx, row in df.reset_index(drop=True).iterrows():
-        label = f"{row.get('name') or row.get('internal_name') or 'Unknown'} - ID {row.get('id', '')} - {row.get('best_map') or 'no map'}"
-        opts[label if label not in opts else f"{label} ({idx})"] = idx
-    return opts
-
-
 def select_row_from_table(table_df: pd.DataFrame, source_df: pd.DataFrame, fallback_label: str) -> pd.Series | None:
     selected_position = None
     try:
@@ -565,21 +552,6 @@ def render_best_farms(df: pd.DataFrame, settings: Dict[str, Any], prices: Dict[s
         render_selected_monster_drops(selected, settings, prices)
     else:
         st.info("Select a monster row above to show its drop value breakdown here.")
-
-
-def render_compare(df: pd.DataFrame) -> None:
-    st.subheader("Compare farms")
-    render_tab_help("compare")
-    if df.empty:
-        st.info("No farms are available under the current filters.")
-        return
-    opts = monster_options(df)
-    selected = st.multiselect("Pick 2-5 monsters", list(opts.keys()), default=list(opts.keys())[: min(3, len(opts))], max_selections=5)
-    rows = [df.reset_index(drop=True).iloc[opts[label]] for label in selected]
-    compare = pd.DataFrame([
-        {"Monster": r.get("name"), "Expected Value": as_float(r.get("expected_value")), "Map score": as_float(r.get("map_value_score")), "Top value share": as_float(r.get("top_value_share")), "Best map": r.get("best_map"), "Spawns": as_int(r.get("best_map_count")), "Level": as_int(r.get("level")), "HP": as_int(r.get("hp")), "Element": r.get("element_display"), "Main drops": r.get("top_drops")} for r in rows
-    ])
-    st.dataframe(rounded_table(compare, ["Expected Value", "Map score", "Top value share"]), use_container_width=True, hide_index=True)
 
 
 def build_map_monster_rows(df: pd.DataFrame) -> pd.DataFrame:
@@ -734,7 +706,7 @@ def main() -> None:
         st.error(str(exc))
         st.stop()
     if raw_df.empty:
-        st.warning("`monster_ev.csv` is empty or missing usable rows. Run `python generate_monster_ev.py` with Hercules data, commit the generated CSV, and redeploy Streamlit.")
+        st.warning("`monster_ev.csv` is empty or missing usable rows. Run `python generate_monster_ev.py` with source data, commit the generated CSV, and redeploy Streamlit.")
         st.stop()
 
     settings, selected_table, prices = render_sidebar(raw_df)
@@ -742,16 +714,14 @@ def main() -> None:
     filtered = filter_dataframe(df, settings)
     render_metrics(filtered, selected_table, prices, settings)
 
-    tabs = st.tabs(["Best farms", "Compare", "Maps", "Prices", "Raw data"])
+    tabs = st.tabs(["Best farms", "Maps", "Prices", "Raw data"])
     with tabs[0]:
         render_best_farms(filtered, settings, prices)
     with tabs[1]:
-        render_compare(filtered)
-    with tabs[2]:
         render_maps(filtered)
-    with tabs[3]:
+    with tabs[2]:
         render_prices(raw_df, selected_table, prices)
-    with tabs[4]:
+    with tabs[3]:
         render_raw(filtered)
 
     with st.expander("How the numbers are interpreted"):
