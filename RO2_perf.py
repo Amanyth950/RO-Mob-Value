@@ -1,3 +1,4 @@
+import inspect
 import json
 from typing import Any
 
@@ -60,9 +61,51 @@ def mkey(p):
     return json.dumps(app.export_price_payload(p, "cache"), sort_keys=True, separators=(",", ":"))
 
 
+def loads_payload(value, fallback):
+    if value is None:
+        return fallback
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError:
+            return fallback
+    return value
+
+
+def cached_settings(df, pk):
+    settings = price_only(defaults(df))
+    loaded = loads_payload(pk, {})
+    if isinstance(loaded, dict):
+        settings.update(loaded)
+    return settings
+
+
+def cached_manual_prices(mk):
+    loaded = loads_payload(mk, {})
+    return app.normalize_manual_prices(loaded)
+
+
+def apply_ev_settings(df, settings, manual_prices):
+    try:
+        signature = inspect.signature(app.apply_ui_ev_settings)
+    except (TypeError, ValueError):
+        return app.apply_ui_ev_settings(df, settings, manual_prices)
+
+    params = list(signature.parameters.values())
+    has_varargs = any(p.kind == inspect.Parameter.VAR_POSITIONAL for p in params)
+    positional = [
+        p
+        for p in params
+        if p.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+    ]
+    if has_varargs or len(positional) >= 3:
+        return app.apply_ui_ev_settings(df, settings, manual_prices)
+    return app.apply_ui_ev_settings(df, settings)
+
+
 @st.cache_data(show_spinner=False)
 def cached_ev(df, pk, mk):
-    return app.apply_ui_ev_settings(df, json.loads(pk), app.normalize_manual_prices(json.loads(mk)))
+    return apply_ev_settings(df, cached_settings(df, pk), cached_manual_prices(mk))
 
 
 def clamp_range(v: Any, fallback, mn, mx):
@@ -158,10 +201,4 @@ def main():
 - UARO pricing is **{'on' if settings['use_uaro_prices'] else 'off'}**. When on, adjusted item prices and Great Nature conversion are used before Overcharge.
 - Manual prices override NPC/UARO/conversion prices and do **not** receive Overcharge.
 - Poring Coin is **{'included' if settings['include_poring_coin'] else 'not included'}**. When included, it adds a fixed 5% custom drop valued at **{app.format_zeny(settings['poring_coin_price'])}**.
-- `Map score` is `Expected Value * spawn count`; it is a simple density proxy, not zeny/hour.
-- Boss-flagged monsters and monsters with MVP drops are hidden by default.
-        """.strip())
-
-
-if __name__ == "__main__":
-    main()
+""")
